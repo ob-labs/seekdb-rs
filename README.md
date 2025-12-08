@@ -76,20 +76,6 @@ async fn main() -> Result<(), SeekDbError> {
 }
 ```
 
-等价的传统写法仍然可用（与上面的 builder 行为一致）：
-
-```rust
-let client = ServerClient::connect(
-    "127.0.0.1",
-    2881,
-    "sys",
-    "demo",
-    "root",
-    "",
-)
-.await?;
-```
-
 Rust 版 `ServerClient` 与 Python 版 `RemoteServerClient` 类似：
 
 - 使用 `user@tenant` 的身份连接（内部自动拼接）。
@@ -151,7 +137,7 @@ Rust 版中没有 Python 的统一 `Client` 工厂类，直接使用 `ServerClie
 
 | Method / Property                            | Status | Description                                                                 |
 |----------------------------------------------|--------|-----------------------------------------------------------------------------|
-| `ServerClient::connect(...)`                 | ✅     | 通过参数连接远程 seekdb / OceanBase                                         |
+| `ServerClient::builder()`                    | ✅     | 通过 builder 链式配置并创建远程客户端                                       |
 | `ServerClient::from_config(ServerConfig)`    | ✅     | 从配置连接                                                                  |
 | `ServerClient::from_env()`                   | ✅     | 从环境变量构建配置并连接                                                    |
 | `ServerClient::pool()`                       | ✅     | 获取底层 `MySqlPool`                                                        |

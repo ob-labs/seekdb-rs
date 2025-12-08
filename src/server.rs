@@ -15,7 +15,7 @@ use crate::types::Database;
 ///
 /// This provides a more ergonomic, chainable way to configure connection
 /// parameters, mirroring the `ServerConfig` structure while keeping existing
-/// `ServerClient::connect` / `from_config` / `from_env` APIs intact.
+/// `ServerClient::from_config` / `from_env` APIs intact.
 pub struct ServerClientBuilder {
     host: String,
     port: u16,
@@ -35,21 +35,6 @@ pub struct ServerClient {
 }
 
 impl ServerClient {
-    /// Establish a connection pool.
-    pub async fn connect(
-        host: &str,
-        port: u16,
-        tenant: &str,
-        database: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<Self> {
-        Self::connect_internal(
-            host, port, tenant, database, user, password, /*max_connections*/ 5,
-        )
-        .await
-    }
-
     /// Build a client from a `ServerConfig`.
     pub async fn from_config(config: ServerConfig) -> Result<Self> {
         Self::connect_internal(
@@ -83,9 +68,6 @@ impl ServerClient {
     }
 
     /// Start building a [`ServerClient`] using a fluent builder API.
-    ///
-    /// This is a convenient alternative to directly calling
-    /// [`ServerClient::connect`] or constructing a [`ServerConfig`] manually.
     pub fn builder() -> ServerClientBuilder {
         ServerClientBuilder::new()
     }

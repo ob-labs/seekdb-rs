@@ -687,7 +687,7 @@ pub fn build_where_clause(
    - 当前实现：已完成（含 `Database`、`DistanceMetric::as_str` 等）。
 
 2. **基础连接层**
-   - `ServerClient::connect/from_config/from_env/execute/fetch_all`；
+   - `ServerClient::builder/from_config/from_env/execute/fetch_all`；
    - 当前实现：已完成，基于 `sqlx::mysql::MySqlPool`。
 
 3. **Collection 管理与元数据**
@@ -736,4 +736,3 @@ pub fn build_where_clause(
   - 使同一高层 API 可在不同引擎/模式之间复用。
 
 当前接口设计与实现总体一致，可作为后续演进和对外文档的基准。未来扩展新 backend 或 embedding 实现时，优先保持上述 trait 与结果类型的稳定性。 
-

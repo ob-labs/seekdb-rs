@@ -9,22 +9,23 @@ use seekdb_rs::{AdminApi, AdminClient, ServerClient};
 mod common;
 use common::{load_config_for_integration, ts_suffix};
 
-/// Smoke test for the README-style `ServerClient::connect` example.
+/// Smoke test for a basic `ServerClient` connection using explicit parameters.
 #[tokio::test]
 async fn client_connect_and_execute() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
 
-    let client = ServerClient::connect(
-        &config.host,
-        config.port,
-        &config.tenant,
-        &config.database,
-        &config.user,
-        &config.password,
-    )
-    .await?;
+    let client = ServerClient::builder()
+        .host(&config.host)
+        .port(config.port)
+        .tenant(&config.tenant)
+        .database(&config.database)
+        .user(&config.user)
+        .password(&config.password)
+        .max_connections(config.max_connections)
+        .build()
+        .await?;
 
     // `SELECT 1` should succeed using the simple execute API.
     client.execute("SELECT 1").await?;
