@@ -7,7 +7,7 @@ description = "Rust SDK for SeekDB"
 publish = false
 
 [features]
-default = ["server"]
+default = ["server", "embedding"]
 server = []
 embedding = ["reqwest", "tokenizers", "ort"]
 
