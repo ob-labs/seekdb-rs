@@ -55,6 +55,28 @@ async fn client_from_env_and_adminclient() -> Result<()> {
     Ok(())
 }
 
+/// Smoke test for the `ServerClient::builder` fluent API.
+#[tokio::test]
+async fn client_builder_connect_and_execute() -> Result<()> {
+    let Some(config) = load_config_for_integration() else {
+        return Ok(());
+    };
+
+    let client = ServerClient::builder()
+        .host(&config.host)
+        .port(config.port)
+        .tenant(&config.tenant)
+        .database(&config.database)
+        .user(&config.user)
+        .password(&config.password)
+        .max_connections(config.max_connections)
+        .build()
+        .await?;
+
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+
 /// Basic AdminClient database CRUD roundtrip.
 #[tokio::test]
 async fn admin_database_crud() -> Result<()> {
@@ -80,4 +102,3 @@ async fn admin_database_crud() -> Result<()> {
 
     Ok(())
 }
-

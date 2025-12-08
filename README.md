@@ -58,21 +58,36 @@ use seekdb_rs::{ServerClient, SeekDbError};
 
 #[tokio::main]
 async fn main() -> Result<(), SeekDbError> {
-    // 连接到远程 seekdb / OceanBase
-    let client = ServerClient::connect(
-        "127.0.0.1", // host
-        2881,        // port
-        "sys",       // tenant
-        "demo",      // database
-        "root",      // user（不含 tenant 后缀）
-        "",          // password
-    )
-    .await?;
+    // 使用 builder 链式配置连接参数
+    let client = ServerClient::builder()
+        .host("127.0.0.1") // host
+        .port(2881)        // port
+        .tenant("sys")     // tenant
+        .database("demo")  // database
+        .user("root")      // user（不含 tenant 后缀）
+        .password("")      // password
+        .max_connections(5)
+        .build()
+        .await?;
 
     // 执行 SQL
     let _ = client.execute("SELECT 1").await?;
     Ok(())
 }
+```
+
+等价的传统写法仍然可用（与上面的 builder 行为一致）：
+
+```rust
+let client = ServerClient::connect(
+    "127.0.0.1",
+    2881,
+    "sys",
+    "demo",
+    "root",
+    "",
+)
+.await?;
 ```
 
 Rust 版 `ServerClient` 与 Python 版 `RemoteServerClient` 类似：
@@ -116,6 +131,13 @@ async fn main() -> Result<(), SeekDbError> {
 
     // 或者一步到位
     let client = ServerClient::from_env().await?;
+
+    // 也可以通过 builder 从环境变量读取并覆写部分参数
+    let client = ServerClient::builder()
+        .from_env()?
+        .database("demo_override")
+        .build()
+        .await?;
 
     client.execute("SELECT 1").await?;
     Ok(())

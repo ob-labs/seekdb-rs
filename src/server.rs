@@ -11,6 +11,21 @@ use crate::error::{Result, SeekDbError};
 use crate::meta::CollectionNames;
 use crate::types::Database;
 
+/// Builder for configuring and constructing a [`ServerClient`].
+///
+/// This provides a more ergonomic, chainable way to configure connection
+/// parameters, mirroring the `ServerConfig` structure while keeping existing
+/// `ServerClient::connect` / `from_config` / `from_env` APIs intact.
+pub struct ServerClientBuilder {
+    host: String,
+    port: u16,
+    tenant: String,
+    database: String,
+    user: String,
+    password: String,
+    max_connections: u32,
+}
+
 /// Server-side client that talks to seekdb/OceanBase over MySQL protocol.
 #[derive(Clone)]
 pub struct ServerClient {
@@ -65,6 +80,14 @@ impl ServerClient {
 
     pub fn database(&self) -> &str {
         &self.database
+    }
+
+    /// Start building a [`ServerClient`] using a fluent builder API.
+    ///
+    /// This is a convenient alternative to directly calling
+    /// [`ServerClient::connect`] or constructing a [`ServerConfig`] manually.
+    pub fn builder() -> ServerClientBuilder {
+        ServerClientBuilder::new()
     }
 
     /// Execute a SQL statement that does not return rows.
@@ -442,6 +465,85 @@ impl ServerClient {
             tenant: tenant.to_string(),
             database: database.to_string(),
         })
+    }
+}
+
+impl ServerClientBuilder {
+    fn new() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 2881,
+            tenant: "sys".to_string(),
+            database: "test".to_string(),
+            user: "root".to_string(),
+            password: String::new(),
+            max_connections: 5,
+        }
+    }
+
+    /// Populate the builder from `SERVER_*` environment variables using
+    /// [`ServerConfig::from_env`]. Individual fields can still be overridden
+    /// afterwards via the other builder methods.
+    pub fn from_env() -> Result<Self> {
+        let config = ServerConfig::from_env()?;
+        Ok(Self {
+            host: config.host,
+            port: config.port,
+            tenant: config.tenant,
+            database: config.database,
+            user: config.user,
+            password: config.password,
+            max_connections: config.max_connections,
+        })
+    }
+
+    pub fn host(mut self, host: impl Into<String>) -> Self {
+        self.host = host.into();
+        self
+    }
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    pub fn tenant(mut self, tenant: impl Into<String>) -> Self {
+        self.tenant = tenant.into();
+        self
+    }
+
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.database = database.into();
+        self
+    }
+
+    pub fn user(mut self, user: impl Into<String>) -> Self {
+        self.user = user.into();
+        self
+    }
+
+    pub fn password(mut self, password: impl Into<String>) -> Self {
+        self.password = password.into();
+        self
+    }
+
+    pub fn max_connections(mut self, max_connections: u32) -> Self {
+        self.max_connections = max_connections;
+        self
+    }
+
+    /// Build a [`ServerClient`] using the current builder configuration.
+    pub async fn build(self) -> Result<ServerClient> {
+        ServerClient::connect_internal(
+            &self.host,
+            self.port,
+            &self.tenant,
+            &self.database,
+            &self.user,
+            &self.password,
+            self.max_connections,
+        )
+        .await
     }
 }
 
