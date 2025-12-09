@@ -40,6 +40,7 @@ cargo build
 
 - 默认启用 `server` feature（Server 模式客户端）。
 - 可选启用 `embedding` feature，集成基于 ONNX 的默认文本向量模型 `DefaultEmbedding`（依赖 `reqwest` / `tokenizers` / `ort`）。
+- 可选启用 `sync` feature，提供基于内部 Tokio runtime 的阻塞版客户端 `SyncServerClient` / `SyncCollection`，方便纯同步项目直接使用。
 
 ---
 
@@ -133,7 +134,7 @@ async fn main() -> Result<(), SeekDbError> {
 ### 1.3 Client Methods and Properties
 
 Rust 版中没有 Python 的统一 `Client` 工厂类，直接使用 `ServerClient`。  
-主要方法：
+主要方法（异步 API）：
 
 | Method / Property                            | Status | Description                                                                 |
 |----------------------------------------------|--------|-----------------------------------------------------------------------------|
@@ -153,6 +154,49 @@ Rust 版中没有 Python 的统一 `Client` 工厂类，直接使用 `ServerClie
 | `ServerClient::count_collection()`           | ✅     | 统计当前数据库中 Collection 数量                                            |
 
 > ❌ Embedded 模式（对应 Python 的 `Client(path=...)`）暂未在 Rust 中实现。
+
+### 1.4 同步客户端（`SyncServerClient` / `SyncCollection`，需 `sync` feature）
+
+对于不方便在业务层引入 async/await 的场景，Rust SDK 在启用 `sync` feature 时提供一层阻塞包装：
+
+```toml
+[dependencies]
+seekdb-rs = { path = "rust-sdk", features = ["sync"] }
+```
+
+同步连接与调用示例：
+
+```rust
+use seekdb_rs::{ServerConfig, SyncServerClient, SyncCollection, SeekDbError};
+
+fn main() -> Result<(), SeekDbError> {
+    let config = ServerConfig::from_env()?;
+    let client = SyncServerClient::from_config(config)?;
+
+    let hnsw = seekdb_rs::HnswConfig {
+        dimension: 3,
+        distance: seekdb_rs::DistanceMetric::Cosine,
+    };
+
+    let coll: SyncCollection = client
+        .create_collection::<seekdb_rs::DummyEmbedding>("sync_demo", Some(hnsw), None::<seekdb_rs::DummyEmbedding>)?;
+
+    let ids = vec!["id1".to_string(), "id2".to_string()];
+    let embs = vec![vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]];
+    coll.add(&ids, Some(&embs), None, Some(&["doc1".into(), "doc2".into()]))?;
+
+    let cnt = coll.count()?;
+    assert_eq!(cnt, 2);
+
+    Ok(())
+}
+```
+
+说明：
+
+- `SyncServerClient` / `SyncCollection` 内部会维护一个 Tokio runtime，并通过 `block_on` 调用异步实现；
+- API 形状与异步版本基本一一对应，只是去掉了 `async` / `.await`；
+- **不要** 在已有 Tokio runtime 的异步上下文里再调用这些阻塞 API，以避免潜在死锁；在 async 代码中仍推荐直接使用 `ServerClient` / `Collection` 的异步接口。
 
 ---
 
@@ -240,7 +284,7 @@ Rust 版 `Collection<Ef>` 对应 Python 版的 `Collection` 类。
 主要差异：
 
 - Rust 里是参数化泛型：`Collection<Ef = Box<dyn EmbeddingFunction>>`
-- 所有数据操作都是 `async fn`，返回 `Result<_, SeekDbError>`
+- 底层数据操作以 `async fn` 为主，返回 `Result<_, SeekDbError>`；在启用 `sync` feature 时，提供了同步包装类型 `SyncCollection<Ef>`，其方法为阻塞版的等价接口。
 
 ### 3.1 Creating a Collection
 
@@ -1026,7 +1070,7 @@ let coll = client
 Rust SDK 内包含：
 
 - 单元测试：位于各模块的 `#[cfg(test)] mod tests` 中；
-- 集成测试：`rust-sdk/tests/integration_server.rs`，依赖真实 SeekDB / OceanBase 实例。
+- 集成测试：位于 `tests/` 目录下，依赖真实 SeekDB / OceanBase 实例（通过 `SEEKDB_INTEGRATION=1` 和 `SERVER_*` 环境变量控制是否运行）。
 
 运行集成测试：
 
@@ -1038,11 +1082,12 @@ SEEKDB_INTEGRATION=1 SERVER_HOST=127.0.0.1 SERVER_PORT=2881 SERVER_TENANT=sys SE
 
 集成测试覆盖：
 
-- 数据库 CRUD：`admin_database_crud`
-- Collection DML：`collection_dml_roundtrip`
-- `get_or_create_collection` / `count_collection`
-- `upsert` 语义（metadata / document / embeddings 局部更新）
-- 向量查询与过滤：`collection_query_and_filters`
+- 数据库 CRUD、Admin API（`tests/integration_client.rs`）
+- Collection DML / 元信息 / upsert 语义（`tests/integration_collection_dml.rs`）
+- ONNX 默认 embedding 的自动向量生成与查询（`tests/integration_embedding.rs`，需 `embedding` feature）
+- 高级 hybrid search 行为（`tests/integration_hybrid.rs`）
+- README 示例片段（`tests/readme_test.rs`）
+- 同步客户端包装（`tests/integration_sync.rs`，需 `sync` feature）
 
 ---
 
@@ -1065,6 +1110,7 @@ SEEKDB_INTEGRATION=1 SERVER_HOST=127.0.0.1 SERVER_PORT=2881 SERVER_TENANT=sys SE
 | 默认嵌入实现 `DefaultEmbedding` 模型加载与推理    | ✅ 已实现 | 在 `embedding` feature 下提供基于 ONNX 的 `all-MiniLM-L6-v2` 本地推理 |
 | 自动 embedding：`add/update/upsert` 文本转向量   | ✅ 已实现 | Collection 绑定 `embedding_function` 且仅传 `documents` 时自动生成向量 |
 | 文本查询：`Collection::query_texts`              | ✅ 已实现 | 基于 `embedding_function` 自动生成查询向量并复用 `query_embeddings` |
+| 同步包装：`SyncServerClient` / `SyncCollection`  | ✅ 已实现 | 在 `sync` feature 下提供阻塞版客户端，内部基于 Tokio runtime |
 | Hybrid Search：`Collection::hybrid_search`       | ✅ 已实现 | 支持文本向量查询 + metadata/doc 过滤；复杂 search_params 需手动构造 |
 | Embedded Client（嵌入式模式）                    | ❌ 未实现 | Rust 目前仅支持 Server 模式 |
 | RAG Demo（Rust 端到端示例）                      | ❌ 未实现 | 目前仅有 Python demo |

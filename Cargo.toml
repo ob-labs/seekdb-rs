@@ -10,6 +10,7 @@ publish = false
 default = ["server", "embedding"]
 server = []
 embedding = ["reqwest", "tokenizers", "ort", "hf-hub"]
+sync = []
 
 [dependencies]
 async-trait = "0.1"
