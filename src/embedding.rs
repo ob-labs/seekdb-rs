@@ -37,10 +37,9 @@ pub struct DefaultEmbedding {
 #[cfg(feature = "embedding")]
 impl DefaultEmbedding {
     pub fn new() -> Result<Self> {
-        let model_dir = ensure_model_files()?;
+        let (model_path, tokenizer_path) = resolve_model_paths()?;
 
-        let tokenizer_path = model_dir.join("tokenizer.json");
-        let mut tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
+        let mut tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| SeekDbError::Embedding(format!("failed to load tokenizer: {e}")))?;
 
         // Configure truncation/padding to fixed max_length.
@@ -66,8 +65,8 @@ impl DefaultEmbedding {
         let session = session
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
             .map_err(|e| SeekDbError::Embedding(format!("failed to set optimization level: {e}")))?
-            .commit_from_file(model_dir.join("model.onnx"))
-            .map_err(|e| SeekDbError::Embedding(format!("failed to load onnx model: {e}")))?;
+            .commit_from_file(&model_path)
+            .map_err(|e| SeekDbError::Embedding(format!("failed to load onnx model from {}: {e}", model_path.display())))?;
 
         Ok(Self {
             tokenizer,
@@ -114,87 +113,62 @@ fn cache_root() -> std::path::PathBuf {
 }
 
 #[cfg(feature = "embedding")]
-fn model_dir() -> std::path::PathBuf {
-    cache_root().join(MODEL_NAME).join("onnx")
-}
+fn resolve_model_paths() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    use std::path::PathBuf;
+    use hf_hub::api::sync::ApiBuilder;
+    use hf_hub::{Repo, RepoType};
 
-#[cfg(feature = "embedding")]
-fn ensure_model_files() -> Result<std::path::PathBuf> {
-    use std::fs;
+    // Relative paths inside the model repo; can be overridden for non-standard layouts.
+    let model_rel = std::env::var("SEEKDB_ONNX_MODEL_PATH")
+        .unwrap_or_else(|_| "onnx/model.onnx".to_string());
+    let tokenizer_rel = std::env::var("SEEKDB_ONNX_TOKENIZER_PATH")
+        .unwrap_or_else(|_| "tokenizer.json".to_string());
 
-    let dir = model_dir();
-    fs::create_dir_all(&dir)
-        .map_err(|e| SeekDbError::Embedding(format!("failed to create model dir: {e}")))?;
+    // 1) If user explicitly provides a local model directory, use it and skip network.
+    if let Ok(dir) = std::env::var("SEEKDB_ONNX_MODEL_DIR") {
+        let root = PathBuf::from(dir);
+        let model_path = root.join(&model_rel);
+        let tokenizer_path = root.join(&tokenizer_rel);
 
-    // If all required files exist, skip network.
-    let files = [
-        ("onnx/model.onnx", "model.onnx"),
-        ("tokenizer.json", "tokenizer.json"),
-        ("config.json", "config.json"),
-        ("special_tokens_map.json", "special_tokens_map.json"),
-        ("tokenizer_config.json", "tokenizer_config.json"),
-        ("vocab.txt", "vocab.txt"),
-    ];
-
-    let mut missing = Vec::new();
-    for (remote, local) in files {
-        let local_path = dir.join(local);
-        if !local_path.exists() {
-            missing.push((remote, local_path));
+        if !model_path.exists() {
+            return Err(SeekDbError::Embedding(format!(
+                "model.onnx not found at {} (SEEKDB_ONNX_MODEL_PATH={model_rel})",
+                model_path.display()
+            )));
         }
+        if !tokenizer_path.exists() {
+            return Err(SeekDbError::Embedding(format!(
+                "tokenizer.json not found at {} (SEEKDB_ONNX_TOKENIZER_PATH={tokenizer_rel})",
+                tokenizer_path.display()
+            )));
+        }
+        return Ok((model_path, tokenizer_path));
     }
 
-    if !missing.is_empty() {
-        // Perform network download on a dedicated OS thread so that we never
-        // create/destroy a Tokio runtime inside another Tokio runtime context.
-        let dir_clone = dir.clone();
-        std::thread::spawn(move || -> Result<()> {
-            let client = reqwest::blocking::Client::builder()
-                .build()
-                .map_err(|e| SeekDbError::Embedding(format!("failed to build http client: {e}")))?;
+    // 2) Otherwise, download / reuse model files via hf-hub into a configurable cache.
+    let cache_dir = cache_root();
+    let api = ApiBuilder::from_env()
+        .with_cache_dir(cache_dir)
+        .with_progress(true)
+        .build()
+        .map_err(|e| SeekDbError::Embedding(format!("failed to create hf-hub Api: {e}")))?;
 
-            let endpoint = std::env::var("HF_ENDPOINT")
-                .unwrap_or_else(|_| "https://hf-mirror.com".to_string());
-            let endpoint = endpoint.trim_end_matches('/').to_string();
+    let repo_id = std::env::var("SEEKDB_ONNX_REPO_ID")
+        .unwrap_or_else(|_| HF_MODEL_ID.to_string());
+    let revision = std::env::var("SEEKDB_ONNX_REVISION")
+        .unwrap_or_else(|_| "main".to_string());
 
-            let files = [
-                ("onnx/model.onnx", "model.onnx"),
-                ("tokenizer.json", "tokenizer.json"),
-                ("config.json", "config.json"),
-                ("special_tokens_map.json", "special_tokens_map.json"),
-                ("tokenizer_config.json", "tokenizer_config.json"),
-                ("vocab.txt", "vocab.txt"),
-            ];
+    let repo = Repo::with_revision(repo_id, RepoType::Model, revision);
+    let api_repo = api.repo(repo);
 
-            for (remote, local) in files {
-                let local_path = dir_clone.join(local);
-                if local_path.exists() {
-                    continue;
-                }
+    let model_path = api_repo
+        .get(&model_rel)
+        .map_err(|e| SeekDbError::Embedding(format!("failed to get {model_rel} from hf-hub: {e}")))?;
+    let tokenizer_path = api_repo
+        .get(&tokenizer_rel)
+        .map_err(|e| SeekDbError::Embedding(format!("failed to get {tokenizer_rel} from hf-hub: {e}")))?;
 
-                let url = format!("{endpoint}/{HF_MODEL_ID}/resolve/main/{remote}");
-                let mut resp = client
-                    .get(&url)
-                    .send()
-                    .map_err(|e| SeekDbError::Embedding(format!("failed to download {url}: {e}")))?
-                    .error_for_status()
-                    .map_err(|e| SeekDbError::Embedding(format!("failed to download {url}: {e}")))?;
-
-                let mut file = std::fs::File::create(&local_path).map_err(|e| {
-                    SeekDbError::Embedding(format!("failed to create {}: {e}", local_path.display()))
-                })?;
-                resp.copy_to(&mut file).map_err(|e| {
-                    SeekDbError::Embedding(format!("failed writing {}: {e}", local_path.display()))
-                })?;
-            }
-
-            Ok(())
-        })
-        .join()
-        .map_err(|_| SeekDbError::Embedding("download thread panicked".into()))??;
-    }
-
-    Ok(dir)
+    Ok((model_path, tokenizer_path))
 }
 
 #[cfg(feature = "embedding")]

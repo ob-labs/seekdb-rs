@@ -9,7 +9,7 @@ publish = false
 [features]
 default = ["server", "embedding"]
 server = []
-embedding = ["reqwest", "tokenizers", "ort"]
+embedding = ["reqwest", "tokenizers", "ort", "hf-hub"]
 
 [dependencies]
 async-trait = "0.1"
@@ -25,3 +25,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 reqwest = { version = "0.11", features = ["json", "gzip", "rustls-tls", "blocking"], optional = true }
 tokenizers = { version = "0.15", optional = true }
 ort = { version = "2.0.0-rc.10", optional = true }
+hf-hub = { version = "0.4.3", default-features = false, features = ["ureq"], optional = true }

@@ -932,17 +932,19 @@ assert_eq!(embs[0].len(), ef.dimension());
 实现细节（与设计文档一致）：
 
 - 首次调用 `DefaultEmbedding::new()` 时：
-  - 从环境变量 `SEEKDB_ONNX_CACHE_DIR` 或 `~/.cache/seekdb/onnx_models` 中确定模型缓存目录；
-  - 使用 `HF_ENDPOINT` 环境变量指定 HuggingFace 镜像（默认 `https://hf-mirror.com`），拉取：
-    - `onnx/model.onnx`
-    - `tokenizer.json`
-    - `config.json`
-    - `special_tokens_map.json`
-    - `tokenizer_config.json`
-    - `vocab.txt`
+  - 若设置 `SEEKDB_ONNX_MODEL_DIR`，则：
+    - 直接从该目录中读取
+      - `SEEKDB_ONNX_MODEL_PATH`（默认 `onnx/model.onnx`）
+      - `SEEKDB_ONNX_TOKENIZER_PATH`（默认 `tokenizer.json`），
+    - 完全不访问网络。
+  - 否则使用 Hugging Face 官方 `hf-hub` 客户端：
+    - 使用 `SEEKDB_ONNX_CACHE_DIR`（或默认 `~/.cache/seekdb/onnx_models`）作为本地缓存目录；
+    - 通过 `SEEKDB_ONNX_REPO_ID`（默认 `sentence-transformers/all-MiniLM-L6-v2`）和
+      `SEEKDB_ONNX_REVISION`（默认 `main`）定位模型仓库；
+    - 从该仓库中下载 `onnx/model.onnx` 与 `tokenizer.json` 到本地 cache，并重复利用。
   - 使用 `tokenizers` 进行分词 / 截断 / Padding，并通过 `ort` 执行 ONNX 推理；
   - 对输出做基于 `attention_mask` 的 mean pooling，得到 384 维向量。
-- 后续调用会复用本地缓存，不再重复下载。
+- 后续调用会优先命中本地缓存，不再重复下载。
 
 ### 6.3 自定义 EmbeddingFunction（✅ 可自己实现）
 
