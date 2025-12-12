@@ -4,12 +4,16 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "Rust SDK for SeekDB"
-publish = false
+publish = true
+repository = "https://github.com/ob-labs/seekdb-rs"
+keywords = ["seekdb", "oceanbase", "vector-database", "mysql", "rag"]
+categories = ["database", "api-bindings", "asynchronous", "network-programming"]
 
 [features]
-default = ["server"]
+default = ["server", "embedding"]
 server = []
-embedding = ["reqwest", "tokenizers", "ort"]
+embedding = ["reqwest", "tokenizers", "ort", "hf-hub"]
+sync = []
 
 [dependencies]
 async-trait = "0.1"
@@ -25,3 +29,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 reqwest = { version = "0.11", features = ["json", "gzip", "rustls-tls", "blocking"], optional = true }
 tokenizers = { version = "0.15", optional = true }
 ort = { version = "2.0.0-rc.10", optional = true }
+hf-hub = { version = "0.4.3", default-features = false, features = ["ureq"], optional = true }

@@ -10,6 +10,8 @@ pub mod error;
 pub mod filters;
 pub mod meta;
 pub mod server;
+#[cfg(feature = "sync")]
+pub mod sync;
 pub mod types;
 
 pub use crate::admin::{AdminApi, AdminClient};
@@ -27,3 +29,6 @@ pub use crate::types::{
 
 #[cfg(feature = "embedding")]
 pub use crate::embedding::DefaultEmbedding;
+
+#[cfg(feature = "sync")]
+pub use crate::sync::{SyncCollection, SyncServerClient};
