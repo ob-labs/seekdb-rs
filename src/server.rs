@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{MySqlPool, Row};
 
-use crate::backend::SqlBackend;
 use crate::admin::AdminApi;
+use crate::backend::SqlBackend;
 use crate::collection::Collection;
 use crate::config::{DistanceMetric, HnswConfig, ServerConfig};
 use crate::embedding::EmbeddingFunction;
