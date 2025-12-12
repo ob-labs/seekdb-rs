@@ -1,11 +1,13 @@
 //! Integration tests for collection query/get and filter behavior.
 
 use anyhow::Result;
-use seekdb_rs::{DistanceMetric, DocFilter, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient};
+use seekdb_rs::{
+    DistanceMetric, DocFilter, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient,
+};
 use serde_json::json;
 
 mod common;
-use common::{load_config_for_integration, ts_suffix, ConstantEmbedding, DummyEmbedding};
+use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 #[tokio::test]
 async fn collection_query_and_filters() -> Result<()> {
@@ -199,4 +201,3 @@ async fn collection_query_texts_not_implemented() -> Result<()> {
     admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
-

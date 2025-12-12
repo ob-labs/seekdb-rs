@@ -2,14 +2,14 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    collection::{HybridKnn, HybridQuery, HybridRank},
     DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField, SeekDbError,
     ServerClient,
+    collection::{HybridKnn, HybridQuery, HybridRank},
 };
 use serde_json::json;
 
 mod common;
-use common::{load_config_for_integration, ts_suffix, ConstantEmbedding, DummyEmbedding};
+use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Hybrid search should succeed when using embedding_function for query text.
 #[tokio::test]
@@ -178,7 +178,8 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
         json!({"category": "Programming", "score": 80}),
         json!({"category": "AI", "score": 90}),
     ];
-    coll.add(&ids, Some(&embs), Some(&metas), Some(&docs)).await?;
+    coll.add(&ids, Some(&embs), Some(&metas), Some(&docs))
+        .await?;
 
     // Build query: full-text "machine" with metadata filter category == "AI".
     let where_doc = DocFilter::Contains("machine".to_string());
@@ -262,14 +263,7 @@ async fn collection_hybrid_search_not_implemented() -> Result<()> {
         .await?;
 
     let res = coll
-        .hybrid_search(
-            &["query text".to_string()],
-            None,
-            None,
-            None,
-            10,
-            None,
-        )
+        .hybrid_search(&["query text".to_string()], None, None, None, 10, None)
         .await;
 
     assert!(matches!(res, Err(SeekDbError::Embedding(_))));
@@ -278,4 +272,3 @@ async fn collection_hybrid_search_not_implemented() -> Result<()> {
     admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
-

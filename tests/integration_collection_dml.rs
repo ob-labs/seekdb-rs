@@ -1,13 +1,11 @@
 //! Integration tests for collection DML and metadata/upsert semantics.
 
 use anyhow::Result;
-use seekdb_rs::{
-    DistanceMetric, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient,
-};
+use seekdb_rs::{DistanceMetric, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient};
 use serde_json::json;
 
 mod common;
-use common::{load_config_for_integration, ts_suffix, ConstantEmbedding, DummyEmbedding};
+use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Creating a collection without HnswConfig should return a config error.
 #[tokio::test]
@@ -128,7 +126,10 @@ async fn collection_add_with_auto_embedding() -> Result<()> {
     let embs = got.embeddings.as_ref().unwrap();
     assert_eq!(embs.len(), 2);
     assert!(embs.iter().all(|e| e.len() == 3));
-    assert!(embs.iter().all(|e| e.iter().all(|v| (*v - 0.5).abs() < 1e-5)));
+    assert!(
+        embs.iter()
+            .all(|e| e.iter().all(|v| (*v - 0.5).abs() < 1e-5))
+    );
 
     client.delete_collection(&coll_name).await.ok();
     admin.delete_database(&db_name, None).await.ok();
@@ -499,4 +500,3 @@ async fn collection_list_and_has() -> Result<()> {
     admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
-

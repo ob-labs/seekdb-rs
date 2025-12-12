@@ -58,4 +58,3 @@ impl EmbeddingFunction for ConstantEmbedding {
         self.dim
     }
 }
-

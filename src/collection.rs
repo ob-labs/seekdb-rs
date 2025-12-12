@@ -4,11 +4,11 @@ use crate::backend::{BackendRow, SqlBackend};
 use crate::config::DistanceMetric;
 use crate::embedding::EmbeddingFunction;
 use crate::error::{Result, SeekDbError};
-use crate::filters::{build_where_clause, DocFilter, Filter};
+use crate::filters::{DocFilter, Filter, build_where_clause};
 use crate::meta::CollectionNames;
 use crate::server::ServerClient;
 use crate::types::{Embedding, GetResult, IncludeField, Metadata, QueryResult};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// High-level full-text / scalar query configuration for hybrid_search.
 /// Mirrors Python `Collection.hybrid_search(query=...)` semantics.
@@ -301,7 +301,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         Ok(())
     }
 
-pub async fn upsert(
+    pub async fn upsert(
         &self,
         ids: &[String],
         embeddings: Option<&[Embedding]>,
@@ -407,10 +407,7 @@ pub async fn upsert(
 
             let new_doc = documents.and_then(|d| d.get(i)).cloned();
             let new_meta = metadatas.and_then(|m| m.get(i)).cloned();
-            let new_emb = embeddings
-                .as_ref()
-                .and_then(|e| e.get(i))
-                .cloned();
+            let new_emb = embeddings.as_ref().and_then(|e| e.get(i)).cloned();
 
             let (final_doc, final_meta, final_emb) = merge_values(
                 existing_doc,
@@ -565,10 +562,7 @@ pub async fn upsert(
                         embs.push(parse_vector_string(v));
                     }
                 }
-                let dist = row
-                    .get_f32("distance")
-                    .unwrap_or(None)
-                    .unwrap_or(0.0);
+                let dist = row.get_f32("distance").unwrap_or(None).unwrap_or(0.0);
                 dists.push(dist);
             }
 
@@ -615,9 +609,7 @@ pub async fn upsert(
         include: Option<&[IncludeField]>,
     ) -> Result<QueryResult> {
         if texts.is_empty() {
-            return Err(SeekDbError::InvalidInput(
-                "texts must not be empty".into(),
-            ));
+            return Err(SeekDbError::InvalidInput("texts must not be empty".into()));
         }
 
         let ef = self.embedding_function.as_ref().ok_or_else(|| {
@@ -715,9 +707,14 @@ pub async fn upsert(
             }
         }
 
-        let search_parm_json =
-            build_search_parm_from_typed(self, query.as_ref(), knn.as_ref(), rank.as_ref(), n_results)
-                .await?;
+        let search_parm_json = build_search_parm_from_typed(
+            self,
+            query.as_ref(),
+            knn.as_ref(),
+            rank.as_ref(),
+            n_results,
+        )
+        .await?;
 
         if std::env::var("DEBUG_HYBRID").is_ok() {
             eprintln!("DEBUG_HYBRID search_parm_json (advanced): {search_parm_json}");
@@ -735,8 +732,13 @@ pub async fn upsert(
                 if is_hybrid_invalid_argument(&err) {
                     // Fallback: approximate hybrid behavior on the client side by combining
                     // filters from query/knn and delegating to existing query_texts/query_embeddings/get.
-                    self.hybrid_search_advanced_fallback(query.as_ref(), knn.as_ref(), n_results, include)
-                        .await
+                    self.hybrid_search_advanced_fallback(
+                        query.as_ref(),
+                        knn.as_ref(),
+                        n_results,
+                        include,
+                    )
+                    .await
                 } else {
                     Err(err)
                 }
@@ -861,7 +863,14 @@ pub async fn upsert(
             let where_meta = q.where_meta.as_ref();
             let where_doc = q.where_doc.as_ref();
             let get_res = self
-                .get(None, where_meta, where_doc, Some(n_results), Some(0), include)
+                .get(
+                    None,
+                    where_meta,
+                    where_doc,
+                    Some(n_results),
+                    Some(0),
+                    include,
+                )
                 .await?;
 
             let num = get_res.ids.len();
@@ -1170,7 +1179,10 @@ fn empty_query_result(include: Option<&[IncludeField]>) -> QueryResult {
     }
 }
 
-fn transform_hybrid_rows<R: BackendRow>(rows: Vec<R>, include: Option<&[IncludeField]>) -> QueryResult {
+fn transform_hybrid_rows<R: BackendRow>(
+    rows: Vec<R>,
+    include: Option<&[IncludeField]>,
+) -> QueryResult {
     let mut ids = Vec::new();
     let mut docs = Vec::new();
     let mut metas = Vec::new();
@@ -1546,13 +1558,21 @@ async fn build_search_parm_json<Ef: EmbeddingFunction + 'static>(
 fn build_metadata_filter_for_search_parm(filter: &Filter) -> Vec<Value> {
     match filter {
         Filter::Eq { field, value } => vec![json!({"term": { meta_path(field): value }})],
-        Filter::Ne { field, value } => vec![json!({"bool": {"must_not": [ {"term": { meta_path(field): value }} ]}})],
+        Filter::Ne { field, value } => {
+            vec![json!({"bool": {"must_not": [ {"term": { meta_path(field): value }} ]}})]
+        }
         Filter::Gt { field, value } => vec![json!({"range": { meta_path(field): { "gt": value }}})],
-        Filter::Gte { field, value } => vec![json!({"range": { meta_path(field): { "gte": value }}})],
+        Filter::Gte { field, value } => {
+            vec![json!({"range": { meta_path(field): { "gte": value }}})]
+        }
         Filter::Lt { field, value } => vec![json!({"range": { meta_path(field): { "lt": value }}})],
-        Filter::Lte { field, value } => vec![json!({"range": { meta_path(field): { "lte": value }}})],
+        Filter::Lte { field, value } => {
+            vec![json!({"range": { meta_path(field): { "lte": value }}})]
+        }
         Filter::In { field, values } => vec![json!({"terms": { meta_path(field): values }})],
-        Filter::Nin { field, values } => vec![json!({"bool": { "must_not": [ {"terms": { meta_path(field): values }} ]}})],
+        Filter::Nin { field, values } => {
+            vec![json!({"bool": { "must_not": [ {"terms": { meta_path(field): values }} ]}})]
+        }
         Filter::And(filters) => {
             let mut parts = Vec::new();
             for f in filters {
@@ -1603,7 +1623,9 @@ fn meta_path(field: &str) -> String {
 fn build_document_query_for_search_parm(where_doc: Option<&DocFilter>) -> Option<Value> {
     let Some(filter) = where_doc else { return None };
     match filter {
-        DocFilter::Contains(text) => Some(json!({"query_string": { "fields": ["document"], "query": text } })),
+        DocFilter::Contains(text) => {
+            Some(json!({"query_string": { "fields": ["document"], "query": text } }))
+        }
         DocFilter::And(filters) => {
             let mut parts = Vec::new();
             for f in filters {
@@ -1627,7 +1649,9 @@ fn build_document_query_for_search_parm(where_doc: Option<&DocFilter>) -> Option
             if parts.is_empty() {
                 None
             } else {
-                Some(json!({"query_string": { "fields": ["document"], "query": parts.join(" OR ") } }))
+                Some(
+                    json!({"query_string": { "fields": ["document"], "query": parts.join(" OR ") } }),
+                )
             }
         }
         DocFilter::Regex(_) => None, // not supported in hybrid search parameter builder

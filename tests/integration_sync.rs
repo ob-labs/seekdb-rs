@@ -6,7 +6,7 @@ use anyhow::Result;
 use seekdb_rs::{DistanceMetric, HnswConfig, SyncServerClient};
 
 mod common;
-use common::{load_config_for_integration, ts_suffix, DummyEmbedding};
+use common::{DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Basic DML roundtrip using the synchronous client and collection APIs.
 #[test]
@@ -30,7 +30,11 @@ fn sync_collection_dml_roundtrip() -> Result<()> {
         distance: DistanceMetric::Cosine,
     };
 
-    let coll = client.create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)?;
+    let coll = client.create_collection::<DummyEmbedding>(
+        &coll_name,
+        Some(hnsw),
+        None::<DummyEmbedding>,
+    )?;
 
     let id1 = format!("sid1_{}", ts_suffix());
     let id2 = format!("sid2_{}", ts_suffix());
@@ -51,4 +55,3 @@ fn sync_collection_dml_roundtrip() -> Result<()> {
 
     Ok(())
 }
-

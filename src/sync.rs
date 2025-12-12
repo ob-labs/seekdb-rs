@@ -33,8 +33,7 @@ impl SyncServerClient {
     /// Build a synchronous client from a [`ServerConfig`].
     pub fn from_config(config: ServerConfig) -> Result<Self> {
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| SeekDbError::Other(anyhow::Error::new(e)))?
-            ;
+            .map_err(|e| SeekDbError::Other(anyhow::Error::new(e)))?;
         let client = rt.block_on(ServerClient::from_config(config))?;
         let inner = Inner { rt, client };
         Ok(Self {
@@ -45,8 +44,7 @@ impl SyncServerClient {
     /// Build a synchronous client from environment variables.
     pub fn from_env() -> Result<Self> {
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| SeekDbError::Other(anyhow::Error::new(e)))?
-            ;
+            .map_err(|e| SeekDbError::Other(anyhow::Error::new(e)))?;
         let client = rt.block_on(ServerClient::from_env())?;
         let inner = Inner { rt, client };
         Ok(Self {
@@ -68,10 +66,7 @@ impl SyncServerClient {
     }
 
     /// Fetch all rows for the given SQL query.
-    pub fn fetch_all(
-        &self,
-        sql: &str,
-    ) -> Result<Vec<sqlx::mysql::MySqlRow>> {
+    pub fn fetch_all(&self, sql: &str) -> Result<Vec<sqlx::mysql::MySqlRow>> {
         self.inner.rt.block_on(self.inner.client.fetch_all(sql))
     }
 
@@ -131,11 +126,14 @@ impl SyncServerClient {
         config: Option<crate::config::HnswConfig>,
         embedding_function: Option<Ef>,
     ) -> Result<SyncCollection<Ef>> {
-        let collection = self.inner.rt.block_on(
-            self.inner
-                .client
-                .get_or_create_collection(name, config, embedding_function),
-        )?;
+        let collection = self
+            .inner
+            .rt
+            .block_on(self.inner.client.get_or_create_collection(
+                name,
+                config,
+                embedding_function,
+            ))?;
         Ok(SyncCollection {
             inner: Arc::clone(&self.inner),
             collection,
@@ -148,31 +146,19 @@ impl SyncServerClient {
 
     // Admin helpers
 
-    pub fn create_database(
-        &self,
-        name: &str,
-        tenant: Option<&str>,
-    ) -> Result<()> {
+    pub fn create_database(&self, name: &str, tenant: Option<&str>) -> Result<()> {
         self.inner
             .rt
             .block_on(self.inner.client.create_database(name, tenant))
     }
 
-    pub fn get_database(
-        &self,
-        name: &str,
-        tenant: Option<&str>,
-    ) -> Result<crate::types::Database> {
+    pub fn get_database(&self, name: &str, tenant: Option<&str>) -> Result<crate::types::Database> {
         self.inner
             .rt
             .block_on(self.inner.client.get_database(name, tenant))
     }
 
-    pub fn delete_database(
-        &self,
-        name: &str,
-        tenant: Option<&str>,
-    ) -> Result<()> {
+    pub fn delete_database(&self, name: &str, tenant: Option<&str>) -> Result<()> {
         self.inner
             .rt
             .block_on(self.inner.client.delete_database(name, tenant))
@@ -184,11 +170,9 @@ impl SyncServerClient {
         offset: Option<u32>,
         tenant: Option<&str>,
     ) -> Result<Vec<crate::types::Database>> {
-        self.inner.rt.block_on(
-            self.inner
-                .client
-                .list_databases(limit, offset, tenant),
-        )
+        self.inner
+            .rt
+            .block_on(self.inner.client.list_databases(limit, offset, tenant))
     }
 }
 
@@ -305,12 +289,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         metadatas: Option<&[crate::types::Metadata]>,
         documents: Option<&[String]>,
     ) -> Result<()> {
-        self.inner.rt.block_on(self.collection.update(
-            ids,
-            embeddings,
-            metadatas,
-            documents,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .update(ids, embeddings, metadatas, documents),
+        )
     }
 
     pub fn upsert(
@@ -320,12 +302,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         metadatas: Option<&[crate::types::Metadata]>,
         documents: Option<&[String]>,
     ) -> Result<()> {
-        self.inner.rt.block_on(self.collection.upsert(
-            ids,
-            embeddings,
-            metadatas,
-            documents,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .upsert(ids, embeddings, metadatas, documents),
+        )
     }
 
     pub fn delete(
@@ -347,13 +327,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         where_doc: Option<&DocFilter>,
         include: Option<&[IncludeField]>,
     ) -> Result<QueryResult> {
-        self.inner.rt.block_on(self.collection.query_embeddings(
-            embeddings,
-            n_results,
-            where_meta,
-            where_doc,
-            include,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .query_embeddings(embeddings, n_results, where_meta, where_doc, include),
+        )
     }
 
     pub fn query_texts(
@@ -364,13 +341,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         where_doc: Option<&DocFilter>,
         include: Option<&[IncludeField]>,
     ) -> Result<QueryResult> {
-        self.inner.rt.block_on(self.collection.query_texts(
-            texts,
-            n_results,
-            where_meta,
-            where_doc,
-            include,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .query_texts(texts, n_results, where_meta, where_doc, include),
+        )
     }
 
     pub fn hybrid_search(
@@ -400,13 +374,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         n_results: u32,
         include: Option<&[IncludeField]>,
     ) -> Result<QueryResult> {
-        self.inner.rt.block_on(self.collection.hybrid_search_advanced(
-            query,
-            knn,
-            rank,
-            n_results,
-            include,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .hybrid_search_advanced(query, knn, rank, n_results, include),
+        )
     }
 
     pub fn get(
@@ -418,14 +389,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         offset: Option<u32>,
         include: Option<&[IncludeField]>,
     ) -> Result<GetResult> {
-        self.inner.rt.block_on(self.collection.get(
-            ids,
-            where_meta,
-            where_doc,
-            limit,
-            offset,
-            include,
-        ))
+        self.inner.rt.block_on(
+            self.collection
+                .get(ids, where_meta, where_doc, limit, offset, include),
+        )
     }
 
     pub fn count(&self) -> Result<u64> {

@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::types::Embeddings;
 #[cfg(feature = "embedding")]
 use crate::error::SeekDbError;
+use crate::types::Embeddings;
 
 /// Embedding generation abstraction to allow custom models.
 #[async_trait]
@@ -43,13 +43,12 @@ impl DefaultEmbedding {
             .map_err(|e| SeekDbError::Embedding(format!("failed to load tokenizer: {e}")))?;
 
         // Configure truncation/padding to fixed max_length.
-        let mut trunc = tokenizer
-            .get_truncation()
-            .cloned()
-            .unwrap_or_else(|| tokenizers::utils::truncation::TruncationParams {
+        let mut trunc = tokenizer.get_truncation().cloned().unwrap_or_else(|| {
+            tokenizers::utils::truncation::TruncationParams {
                 max_length: DEFAULT_MAX_LENGTH,
                 ..Default::default()
-            });
+            }
+        });
         trunc.max_length = DEFAULT_MAX_LENGTH;
         tokenizer
             .with_truncation(Some(trunc))
@@ -60,13 +59,19 @@ impl DefaultEmbedding {
         tokenizer.with_padding(Some(padding));
 
         // Build ONNX Runtime session
-        let session = ort::session::Session::builder()
-            .map_err(|e| SeekDbError::Embedding(format!("failed to create session builder: {e}")))?;
+        let session = ort::session::Session::builder().map_err(|e| {
+            SeekDbError::Embedding(format!("failed to create session builder: {e}"))
+        })?;
         let session = session
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
             .map_err(|e| SeekDbError::Embedding(format!("failed to set optimization level: {e}")))?
             .commit_from_file(&model_path)
-            .map_err(|e| SeekDbError::Embedding(format!("failed to load onnx model from {}: {e}", model_path.display())))?;
+            .map_err(|e| {
+                SeekDbError::Embedding(format!(
+                    "failed to load onnx model from {}: {e}",
+                    model_path.display()
+                ))
+            })?;
 
         Ok(Self {
             tokenizer,
@@ -92,7 +97,6 @@ impl EmbeddingFunction for DefaultEmbedding {
     }
 }
 
-
 #[cfg(feature = "embedding")]
 const HF_MODEL_ID: &str = "sentence-transformers/all-MiniLM-L6-v2";
 #[cfg(feature = "embedding")]
@@ -113,13 +117,13 @@ fn cache_root() -> std::path::PathBuf {
 
 #[cfg(feature = "embedding")]
 fn resolve_model_paths() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
-    use std::path::PathBuf;
     use hf_hub::api::sync::ApiBuilder;
     use hf_hub::{Repo, RepoType};
+    use std::path::PathBuf;
 
     // Relative paths inside the model repo; can be overridden for non-standard layouts.
-    let model_rel = std::env::var("SEEKDB_ONNX_MODEL_PATH")
-        .unwrap_or_else(|_| "onnx/model.onnx".to_string());
+    let model_rel =
+        std::env::var("SEEKDB_ONNX_MODEL_PATH").unwrap_or_else(|_| "onnx/model.onnx".to_string());
     let tokenizer_rel = std::env::var("SEEKDB_ONNX_TOKENIZER_PATH")
         .unwrap_or_else(|_| "tokenizer.json".to_string());
 
@@ -152,20 +156,18 @@ fn resolve_model_paths() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
         .build()
         .map_err(|e| SeekDbError::Embedding(format!("failed to create hf-hub Api: {e}")))?;
 
-    let repo_id = std::env::var("SEEKDB_ONNX_REPO_ID")
-        .unwrap_or_else(|_| HF_MODEL_ID.to_string());
-    let revision = std::env::var("SEEKDB_ONNX_REVISION")
-        .unwrap_or_else(|_| "main".to_string());
+    let repo_id = std::env::var("SEEKDB_ONNX_REPO_ID").unwrap_or_else(|_| HF_MODEL_ID.to_string());
+    let revision = std::env::var("SEEKDB_ONNX_REVISION").unwrap_or_else(|_| "main".to_string());
 
     let repo = Repo::with_revision(repo_id, RepoType::Model, revision);
     let api_repo = api.repo(repo);
 
-    let model_path = api_repo
-        .get(&model_rel)
-        .map_err(|e| SeekDbError::Embedding(format!("failed to get {model_rel} from hf-hub: {e}")))?;
-    let tokenizer_path = api_repo
-        .get(&tokenizer_rel)
-        .map_err(|e| SeekDbError::Embedding(format!("failed to get {tokenizer_rel} from hf-hub: {e}")))?;
+    let model_path = api_repo.get(&model_rel).map_err(|e| {
+        SeekDbError::Embedding(format!("failed to get {model_rel} from hf-hub: {e}"))
+    })?;
+    let tokenizer_path = api_repo.get(&tokenizer_rel).map_err(|e| {
+        SeekDbError::Embedding(format!("failed to get {tokenizer_rel} from hf-hub: {e}"))
+    })?;
 
     Ok((model_path, tokenizer_path))
 }
@@ -177,10 +179,7 @@ fn run_inference(
     docs: &[String],
     max_length: usize,
 ) -> Result<Embeddings> {
-    use tokenizers::utils::{
-        padding::PaddingStrategy,
-        truncation::TruncationParams,
-    };
+    use tokenizers::utils::{padding::PaddingStrategy, truncation::TruncationParams};
 
     if docs.is_empty() {
         return Ok(Vec::new());
@@ -208,10 +207,7 @@ fn run_inference(
         .encode_batch(docs.to_vec(), true)
         .map_err(|e| SeekDbError::Embedding(format!("tokenization failed: {e}")))?;
 
-    let seq_len = encodings
-        .first()
-        .map(|e| e.get_ids().len())
-        .unwrap_or(0);
+    let seq_len = encodings.first().map(|e| e.get_ids().len()).unwrap_or(0);
     if seq_len == 0 {
         return Err(SeekDbError::Embedding(
             "tokenization produced empty sequence".into(),
@@ -236,10 +232,14 @@ fn run_inference(
     let shape: Vec<i64> = vec![batch as i64, seq_len as i64];
     let input_ids_tensor = ort::value::Tensor::<i64>::from_array((shape.clone(), input_ids))
         .map_err(|e| SeekDbError::Embedding(format!("failed to build input_ids tensor: {e}")))?;
-    let attention_tensor = ort::value::Tensor::<i64>::from_array((shape.clone(), attention_mask.clone()))
-        .map_err(|e| SeekDbError::Embedding(format!("failed to build attention_mask tensor: {e}")))?;
+    let attention_tensor =
+        ort::value::Tensor::<i64>::from_array((shape.clone(), attention_mask.clone())).map_err(
+            |e| SeekDbError::Embedding(format!("failed to build attention_mask tensor: {e}")),
+        )?;
     let token_type_tensor = ort::value::Tensor::<i64>::from_array((shape.clone(), token_type_ids))
-        .map_err(|e| SeekDbError::Embedding(format!("failed to build token_type_ids tensor: {e}")))?;
+        .map_err(|e| {
+            SeekDbError::Embedding(format!("failed to build token_type_ids tensor: {e}"))
+        })?;
 
     let mut session_guard = session
         .lock()
