@@ -24,10 +24,17 @@ The APIs are designed to closely mirror the Python SDK (`pyseekdb`), but this cr
 
 ## Installation
 
-`seekdb-rs` is currently developed as a standalone crate and may not yet be published on crates.io. The recommended way to use it today is via a local path dependency.
+`seekdb-rs` is published on crates.io. The usual way to use it is to depend on the released crate:
 
 ```toml
 # Cargo.toml in your application / workspace crate
+[dependencies]
+seekdb-rs = "0.1"
+```
+
+If you are hacking on the SDK in this repository, you can instead use a local path dependency:
+
+```toml
 [dependencies]
 seekdb-rs = { path = "/path/to/seekdb-rs" } # adjust to where you cloned this repo
 ```
@@ -44,11 +51,11 @@ Features:
 - `embedding` (enabled by default): built‑in ONNX‑based embedding implementation (`DefaultEmbedding`), depends on `reqwest` / `tokenizers` / `ort` / `hf-hub`.
 - `sync` (optional): blocking wrapper around the async client (`SyncServerClient`, `SyncCollection`), backed by an internal Tokio runtime.
 
-Example enabling `sync` and `embedding` explicitly:
+Example enabling `sync` and `embedding` explicitly from crates.io:
 
 ```toml
 [dependencies]
-seekdb-rs = { path = "/path/to/seekdb-rs", features = ["server", "embedding", "sync"] }
+seekdb-rs = { version = "0.1", features = ["server", "embedding", "sync"] }
 ```
 
 ---
@@ -633,4 +640,3 @@ A high‑level comparison with the Python SDK:
 
 For more detailed, API‑by‑API explanations (currently in Simplified Chinese),
 see [`README_zh-CN.md`](README_zh-CN.md).
-

@@ -23,18 +23,24 @@
 
 ## Installation
 
-Rust SDK 当前作为仓库内的子工程存在，尚未发布到 crates.io。推荐以 Workspace 本地依赖的方式使用。
+Rust SDK 已发布到 crates.io，推荐直接通过 crates.io 引入依赖：
 
 ```toml
-# Cargo.toml (在工作区的其他 crate 中)
+# Cargo.toml（在你的应用 / 工作区 crate 中）
 [dependencies]
-seekdb-rs = { path = "rust-sdk" }  # 路径按实际情况调整
+seekdb-rs = "0.1"
 ```
 
-构建：
+如果你在本仓库中一起开发 / 调试，也可以使用本地 path 依赖：
+
+```toml
+[dependencies]
+seekdb-rs = { path = "/path/to/seekdb-rs" }  # 路径按实际情况调整
+```
+
+本地构建：
 
 ```bash
-cd rust-sdk
 cargo build
 ```
 
