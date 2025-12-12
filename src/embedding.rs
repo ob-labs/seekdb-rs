@@ -92,8 +92,7 @@ impl EmbeddingFunction for DefaultEmbedding {
     }
 }
 
-#[cfg(feature = "embedding")]
-const MODEL_NAME: &str = "all-MiniLM-L6-v2";
+
 #[cfg(feature = "embedding")]
 const HF_MODEL_ID: &str = "sentence-transformers/all-MiniLM-L6-v2";
 #[cfg(feature = "embedding")]

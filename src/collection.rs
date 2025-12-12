@@ -1090,7 +1090,7 @@ fn id_from_row<R: BackendRow>(row: &R) -> String {
 }
 
 fn bind_metadata<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+    query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
     value: &Value,
 ) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
     match value {
