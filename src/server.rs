@@ -49,7 +49,6 @@ impl ServerClient {
         .await
     }
 
-    /// Build a client from environment variables (delegates to `ServerConfig::from_env`).
     pub async fn from_env() -> Result<Self> {
         let config = ServerConfig::from_env()?;
         Self::from_config(config).await
@@ -67,7 +66,6 @@ impl ServerClient {
         &self.database
     }
 
-    /// Start building a [`ServerClient`] using a fluent builder API.
     pub fn builder() -> ServerClientBuilder {
         ServerClientBuilder::new()
     }
@@ -88,7 +86,6 @@ impl ServerClient {
             .map_err(Into::into)
     }
 
-    // Collection management
     pub async fn create_collection<Ef: EmbeddingFunction + 'static>(
         &self,
         name: &str,

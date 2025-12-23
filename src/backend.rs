@@ -40,10 +40,6 @@ pub trait SqlBackend: Send + Sync {
     fn mode(&self) -> &'static str;
 }
 
-// -----------------------------------------------------------------------------
-// sqlx MySQL row implementation
-// -----------------------------------------------------------------------------
-
 impl BackendRow for sqlx::mysql::MySqlRow {
     fn get_bytes(&self, column: &str) -> Result<Option<Vec<u8>>> {
         use sqlx::Row;
