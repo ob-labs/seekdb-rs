@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::collection::Collection;
+use crate::collection::{AddBatch, Collection, DeleteQuery, GetQuery, UpdateBatch, UpsertBatch};
 use crate::config::ServerConfig;
 use crate::embedding::EmbeddingFunction;
 use crate::error::{Result, SeekDbError};
@@ -282,6 +282,10 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
             .block_on(self.collection.add(ids, embeddings, metadatas, documents))
     }
 
+    pub fn add_batch(&self, batch: AddBatch<'_>) -> Result<()> {
+        self.inner.rt.block_on(self.collection.add_batch(batch))
+    }
+
     pub fn update(
         &self,
         ids: &[String],
@@ -293,6 +297,12 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
             self.collection
                 .update(ids, embeddings, metadatas, documents),
         )
+    }
+
+    pub fn update_batch(&self, batch: UpdateBatch<'_>) -> Result<()> {
+        self.inner
+            .rt
+            .block_on(self.collection.update_batch(batch))
     }
 
     pub fn upsert(
@@ -308,6 +318,12 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         )
     }
 
+    pub fn upsert_batch(&self, batch: UpsertBatch<'_>) -> Result<()> {
+        self.inner
+            .rt
+            .block_on(self.collection.upsert_batch(batch))
+    }
+
     pub fn delete(
         &self,
         ids: Option<&[String]>,
@@ -317,6 +333,12 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
         self.inner
             .rt
             .block_on(self.collection.delete(ids, where_meta, where_doc))
+    }
+
+    pub fn delete_query(&self, query: DeleteQuery<'_>) -> Result<()> {
+        self.inner
+            .rt
+            .block_on(self.collection.delete_query(query))
     }
 
     pub fn query_embeddings(
@@ -393,6 +415,12 @@ impl<Ef: EmbeddingFunction + 'static> SyncCollection<Ef> {
             self.collection
                 .get(ids, where_meta, where_doc, limit, offset, include),
         )
+    }
+
+    pub fn get_query(&self, query: GetQuery<'_>) -> Result<GetResult> {
+        self.inner
+            .rt
+            .block_on(self.collection.get_query(query))
     }
 
     pub fn count(&self) -> Result<u64> {

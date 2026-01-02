@@ -3,7 +3,7 @@
 //! These tests are skipped unless `SEEKDB_INTEGRATION=1` and SERVER_* env vars are set.
 
 use anyhow::Result;
-use seekdb_rs::{DistanceMetric, HnswConfig, SyncServerClient};
+use seekdb_rs::{AddBatch, DistanceMetric, HnswConfig, SyncServerClient};
 
 mod common;
 use common::{DummyEmbedding, load_config_for_integration, ts_suffix};
@@ -39,11 +39,10 @@ fn sync_collection_dml_roundtrip() -> Result<()> {
     let id1 = format!("sid1_{}", ts_suffix());
     let id2 = format!("sid2_{}", ts_suffix());
 
-    coll.add(
-        &[id1.clone(), id2.clone()],
-        Some(&[vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]]),
-        None,
-        Some(&["sdoc1".into(), "sdoc2".into()]),
+    coll.add_batch(
+        AddBatch::new(&[id1.clone(), id2.clone()])
+            .embeddings(&[vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]])
+            .documents(&["sdoc1".into(), "sdoc2".into()]),
     )?;
 
     let cnt = coll.count()?;

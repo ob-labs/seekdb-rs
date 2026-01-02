@@ -15,7 +15,9 @@ pub mod sync;
 pub mod types;
 
 pub use crate::admin::{AdminApi, AdminClient};
-pub use crate::collection::Collection;
+pub use crate::collection::{
+    AddBatch, Collection, DeleteQuery, GetQuery, UpdateBatch, UpsertBatch,
+};
 pub use crate::config::{DistanceMetric, HnswConfig, ServerConfig};
 pub use crate::embedding::EmbeddingFunction;
 pub use crate::error::SeekDbError;

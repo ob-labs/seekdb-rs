@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField, SeekDbError,
-    ServerClient,
     collection::{HybridKnn, HybridQuery, HybridRank},
+    AddBatch, DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField, SeekDbError,
+    ServerClient,
 };
 use serde_json::json;
 
@@ -42,7 +42,8 @@ async fn collection_hybrid_search_basic() -> Result<()> {
         "seekdb vector".to_string(),
         "other text".to_string(),
     ];
-    coll.add(&ids, None, None, Some(&docs)).await?;
+    coll.add_batch(AddBatch::new(&ids).documents(&docs))
+        .await?;
 
     let qr = coll
         .hybrid_search(
@@ -102,7 +103,12 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
         vec![1.1_f32, 2.1_f32, 3.1_f32],
         vec![5.0_f32, 5.0_f32, 5.0_f32],
     ];
-    coll.add(&ids, Some(&embs), None, Some(&docs)).await?;
+    coll.add_batch(
+        AddBatch::new(&ids)
+            .embeddings(&embs)
+            .documents(&docs),
+    )
+    .await?;
 
     // Use a query embedding close to the first two vectors.
     let query_vec: Embedding = vec![1.05_f32, 2.05_f32, 3.05_f32];
@@ -178,8 +184,13 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
         json!({"category": "Programming", "score": 80}),
         json!({"category": "AI", "score": 90}),
     ];
-    coll.add(&ids, Some(&embs), Some(&metas), Some(&docs))
-        .await?;
+    coll.add_batch(
+        AddBatch::new(&ids)
+            .embeddings(&embs)
+            .metadatas(&metas)
+            .documents(&docs),
+    )
+    .await?;
 
     // Build query: full-text "machine" with metadata filter category == "AI".
     let where_doc = DocFilter::Contains("machine".to_string());

@@ -92,6 +92,8 @@ impl ServerClient {
         config: Option<HnswConfig>,
         embedding_function: Option<Ef>,
     ) -> Result<Collection<Ef>> {
+        CollectionNames::validate(name)?;
+
         let cfg = config.ok_or_else(|| {
             SeekDbError::Config("HnswConfig must be provided when creating a collection".into())
         })?;
@@ -116,6 +118,8 @@ impl ServerClient {
         name: &str,
         embedding_function: Option<Ef>,
     ) -> Result<Collection<Ef>> {
+        CollectionNames::validate(name)?;
+
         let table_name = CollectionNames::table_name(name);
 
         // Check existence by describing the table
@@ -170,6 +174,8 @@ impl ServerClient {
     }
 
     pub async fn delete_collection(&self, name: &str) -> Result<()> {
+        CollectionNames::validate(name)?;
+
         let table_name = CollectionNames::table_name(name);
         let sql = format!("DROP TABLE IF EXISTS `{table_name}`");
         self.execute(&sql).await?;
@@ -203,6 +209,8 @@ impl ServerClient {
     }
 
     pub async fn has_collection(&self, name: &str) -> Result<bool> {
+        CollectionNames::validate(name)?;
+
         let table_name = CollectionNames::table_name(name);
         let sql = format!(
             "SELECT 1 FROM information_schema.TABLES \
@@ -223,6 +231,8 @@ impl ServerClient {
         config: Option<HnswConfig>,
         embedding_function: Option<Ef>,
     ) -> Result<Collection<Ef>> {
+        CollectionNames::validate(name)?;
+
         if self.has_collection(name).await? {
             self.get_collection(name, embedding_function).await
         } else {
