@@ -2,7 +2,8 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    DistanceMetric, DocFilter, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient,
+    AddBatch, DistanceMetric, DocFilter, Filter, GetQuery, HnswConfig, IncludeField, SeekDbError,
+    ServerClient,
 };
 use serde_json::json;
 
@@ -49,8 +50,13 @@ async fn collection_query_and_filters() -> Result<()> {
         json!({"score": 30, "tag": "x"}),
     ];
 
-    coll.add(&ids, Some(&embs), Some(&metas), Some(&docs))
-        .await?;
+    coll.add_batch(
+        AddBatch::new(&ids)
+            .embeddings(&embs)
+            .metadatas(&metas)
+            .documents(&docs),
+    )
+    .await?;
 
     // get with metadata filter
     let where_meta = Filter::Gt {
@@ -58,14 +64,14 @@ async fn collection_query_and_filters() -> Result<()> {
         value: json!(15),
     };
     let got = coll
-        .get(None, Some(&where_meta), None, None, None, None)
+        .get_query(GetQuery::new().with_where_meta(&where_meta))
         .await?;
     assert!(got.ids.len() >= 1);
 
     // get with document filter
     let where_doc = DocFilter::Contains("rust".into());
     let got_doc = coll
-        .get(None, None, Some(&where_doc), None, None, None)
+        .get_query(GetQuery::new().with_where_doc(&where_doc))
         .await?;
     assert!(got_doc.ids.len() >= 1);
 
@@ -100,14 +106,14 @@ async fn collection_query_and_filters() -> Result<()> {
         values: vec![json!("x")],
     };
     let got_in = coll
-        .get(None, Some(&where_in), None, None, None, None)
+        .get_query(GetQuery::new().with_where_meta(&where_in))
         .await?;
     assert!(got_in.ids.len() >= 1);
 
     // README-style `DocFilter::Regex` document filter.
     let where_doc_regex = DocFilter::Regex("rust".into());
     let got_regex = coll
-        .get(None, None, Some(&where_doc_regex), None, None, None)
+        .get_query(GetQuery::new().with_where_doc(&where_doc_regex))
         .await?;
     assert!(got_regex.ids.len() >= 1);
 
@@ -143,7 +149,7 @@ async fn collection_query_texts_with_embedding_function() -> Result<()> {
     let ids = vec!["qt1".to_string(), "qt2".to_string()];
     let docs = vec!["hello rust".to_string(), "hello seekdb".to_string()];
     // Use auto-embedding for adds (documents only).
-    coll.add(&ids, None, None, Some(&docs)).await?;
+    coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
 
     let qr = coll
         .query_texts(

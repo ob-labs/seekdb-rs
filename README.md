@@ -24,10 +24,17 @@ The APIs are designed to closely mirror the Python SDK (`pyseekdb`), but this cr
 
 ## Installation
 
-`seekdb-rs` is currently developed as a standalone crate and may not yet be published on crates.io. The recommended way to use it today is via a local path dependency.
+`seekdb-rs` is published on crates.io. The usual way to use it is to depend on the released crate:
 
 ```toml
 # Cargo.toml in your application / workspace crate
+[dependencies]
+seekdb-rs = "0.1"
+```
+
+If you are hacking on the SDK in this repository, you can instead use a local path dependency:
+
+```toml
 [dependencies]
 seekdb-rs = { path = "/path/to/seekdb-rs" } # adjust to where you cloned this repo
 ```
@@ -44,11 +51,11 @@ Features:
 - `embedding` (enabled by default): built‑in ONNX‑based embedding implementation (`DefaultEmbedding`), depends on `reqwest` / `tokenizers` / `ort` / `hf-hub`.
 - `sync` (optional): blocking wrapper around the async client (`SyncServerClient`, `SyncCollection`), backed by an internal Tokio runtime.
 
-Example enabling `sync` and `embedding` explicitly:
+Example enabling `sync` and `embedding` explicitly from crates.io:
 
 ```toml
 [dependencies]
-seekdb-rs = { path = "/path/to/seekdb-rs", features = ["server", "embedding", "sync"] }
+seekdb-rs = { version = "0.1", features = ["server", "embedding", "sync"] }
 ```
 
 ---
@@ -264,6 +271,8 @@ async fn main() -> Result<(), SeekDbError> {
 If `HnswConfig` is missing, collection creation fails with:
 `SeekDbError::Config("HnswConfig must be provided when creating a collection")`.
 
+Collection names must be non-empty, use only ASCII letters/digits/underscore (`[a-zA-Z0-9_]`), and the resulting physical table name (including the `c$v1$` prefix) must not exceed 64 characters; otherwise `SeekDbError::InvalidInput` is returned before any SQL is executed.
+
 ### 3.2 Getting a Collection
 
 ```rust
@@ -322,10 +331,13 @@ Rust implements DML operations with semantics close to Python:
 - When a collection has an `embedding_function`, `add` / `update` / `upsert`
   can generate embeddings automatically from `documents`.
 
-### 4.1 `add` – insert new rows
+### 4.1 `add_batch` – insert new rows (recommended)
+
+The most ergonomic way to insert data is via the builder‑style `AddBatch`
+wrapper:
 
 ```rust
-use seekdb_rs::{Embedding, Metadata};
+use seekdb_rs::{AddBatch, Embedding, Metadata};
 use serde_json::json;
 
 let ids = vec!["item1".to_string(), "item2".to_string()];
@@ -336,8 +348,13 @@ let metadatas: Vec<Metadata> = vec![
     json!({"category": "ML", "score": 88}),
 ];
 
-coll.add(&ids, Some(&embeddings), Some(&metadatas), Some(&documents))
-    .await?;
+coll.add_batch(
+    AddBatch::new(&ids)
+        .embeddings(&embeddings)
+        .documents(&documents)
+        .metadatas(&metadatas),
+)
+.await?;
 ```
 
 When the collection was created with an `EmbeddingFunction`, you can skip the
@@ -364,33 +381,37 @@ let ids = vec!["auto1".to_string(), "auto2".to_string()];
 let docs = vec!["hello rust".to_string(), "seekdb vector".to_string()];
 
 // No explicit embeddings: documents are embedded automatically
-coll.add(&ids, None, None, Some(&docs)).await?;
+coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
 ```
 
-### 4.2 `update` – update existing rows
+> The lower‑level `add(&ids, embeddings, metadatas, documents)` API is still
+> available, but the builder style is preferred for readability and future
+> extensibility.
+
+### 4.2 `update_batch` – update existing rows
 
 ```rust
+use seekdb_rs::UpdateBatch;
+
 // Metadata‑only update
-coll.update(
-    &["item1".to_string()],
-    None,
-    Some(&[serde_json::json!({"category": "AI", "score": 98})]),
-    None,
+coll.update_batch(
+    UpdateBatch::new(&["item1".to_string()])
+        .metadatas(&[serde_json::json!({"category": "AI", "score": 98})]),
 )
 .await?;
 
 // Update embeddings + metadata + documents
-coll.update(
-    &["item1".to_string(), "item2".to_string()],
-    Some(&[vec![0.9, 0.8, 0.7], vec![0.6, 0.5, 0.4]]),
-    Some(&[
-        serde_json::json!({"category": "AI"}),
-        serde_json::json!({"category": "ML"}),
-    ]),
-    Some(&[
-        "Updated document 1".to_string(),
-        "Updated document 2".to_string(),
-    ]),
+coll.update_batch(
+    UpdateBatch::new(&["item1".to_string(), "item2".to_string()])
+        .embeddings(&[vec![0.9, 0.8, 0.7], vec![0.6, 0.5, 0.4]])
+        .metadatas(&[
+            serde_json::json!({"category": "AI"}),
+            serde_json::json!({"category": "ML"}),
+        ])
+        .documents(&[
+            "Updated document 1".to_string(),
+            "Updated document 2".to_string(),
+        ]),
 )
 .await?;
 ```
@@ -403,35 +424,32 @@ Validation rules:
 - If no embeddings are provided but documents are, and the collection has an
   `embedding_function`, the SDK generates embeddings automatically.
 
-### 4.3 `upsert` – insert or update
+### 4.3 `upsert_batch` – insert or update
 
 ```rust
+use seekdb_rs::UpsertBatch;
+
 let id = "item1".to_string();
 
 // 1) Insert
-coll.upsert(
-    &[id.clone()],
-    Some(&[vec![1.0, 2.0, 3.0]]),
-    Some(&[serde_json::json!({"tag": "init", "cnt": 1})]),
-    Some(&["doc1".to_string()]),
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()])
+        .embeddings(&[vec![1.0, 2.0, 3.0]])
+        .metadatas(&[serde_json::json!({"tag": "init", "cnt": 1})])
+        .documents(&["doc1".to_string()]),
 )
 .await?;
 
 // 2) Metadata‑only upsert: keep doc and embedding
-coll.upsert(
-    &[id.clone()],
-    None,
-    Some(&[serde_json::json!({"tag": "init", "cnt": 2})]),
-    None,
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()])
+        .metadatas(&[serde_json::json!({"tag": "init", "cnt": 2})]),
 )
 .await?;
 
 // 3) Document‑only upsert
-coll.upsert(
-    &[id.clone()],
-    None,
-    None,
-    Some(&["new_doc".to_string()]),
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()]).documents(&["new_doc".to_string()]),
 )
 .await?;
 ```
@@ -449,16 +467,16 @@ Semantics:
   - If only `documents` are given and the collection has an `embedding_function`,
     embeddings are generated; otherwise only the document field is updated.
 
-### 4.4 `delete`
+### 4.4 `delete` (with `DeleteQuery`)
 
-Rust mirrors Python’s `collection.delete(ids=..., where=..., where_document=...)` using strongly typed filters.
+Rust mirrors Python’s `collection.delete(ids=..., where=..., where_document=...)` using strongly typed filters and a builder‑style `DeleteQuery`.
 
 ```rust
-use seekdb_rs::{Filter, DocFilter};
+use seekdb_rs::{DeleteQuery, Filter, DocFilter};
 use serde_json::json;
 
 // Delete by IDs
-coll.delete(Some(&vec!["id1".to_string(), "id2".to_string()]), None, None)
+coll.delete_query(DeleteQuery::by_ids(&["id1".to_string(), "id2".to_string()]))
     .await?;
 
 // Delete by metadata filter
@@ -466,15 +484,14 @@ let where_meta = Filter::Gte {
     field: "score".into(),
     value: json!(90),
 };
-coll.delete(None, Some(&where_meta), None).await?;
+coll.delete_query(DeleteQuery::new().with_where_meta(&where_meta))
+    .await?;
 
 // Delete by document filter
 let where_doc = DocFilter::Contains("machine learning".into());
-coll.delete(None, None, Some(&where_doc)).await?;
+coll.delete_query(DeleteQuery::new().with_where_doc(&where_doc))
+    .await?;
 ```
-
-If all of `ids`, `where_meta`, and `where_doc` are `None`,
-`SeekDbError::InvalidInput` is returned.
 
 ---
 
@@ -633,4 +650,3 @@ A high‑level comparison with the Python SDK:
 
 For more detailed, API‑by‑API explanations (currently in Simplified Chinese),
 see [`README_zh-CN.md`](README_zh-CN.md).
-

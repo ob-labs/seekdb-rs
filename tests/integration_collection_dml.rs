@@ -1,7 +1,10 @@
 //! Integration tests for collection DML and metadata/upsert semantics.
 
 use anyhow::Result;
-use seekdb_rs::{DistanceMetric, Filter, HnswConfig, IncludeField, SeekDbError, ServerClient};
+use seekdb_rs::{
+    AddBatch, DeleteQuery, DistanceMetric, Filter, GetQuery, HnswConfig, IncludeField,
+    SeekDbError, ServerClient, UpdateBatch, UpsertBatch,
+};
 use serde_json::json;
 
 mod common;
@@ -62,7 +65,9 @@ async fn collection_add_invalid_embedding_dimension_errors() -> Result<()> {
     // Deliberately wrong dimension (2 instead of 3)
     let bad_embs = vec![vec![1.0_f32, 2.0_f32]];
 
-    let res = coll.add(&ids, Some(&bad_embs), None, None).await;
+    let res = coll
+        .add_batch(AddBatch::new(&ids).embeddings(&bad_embs))
+        .await;
     match res {
         Err(SeekDbError::InvalidInput(msg)) => {
             assert!(
@@ -104,16 +109,11 @@ async fn collection_add_with_auto_embedding() -> Result<()> {
 
     let ids = vec!["auto1".to_string(), "auto2".to_string()];
     let docs = vec!["hello rust".to_string(), "seekdb vector".to_string()];
-    coll.add(&ids, None, None, Some(&docs)).await?;
+    coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
 
     let got = coll
-        .get(
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(&[
+        .get_query(
+            GetQuery::new().with_include(&[
                 IncludeField::Documents,
                 IncludeField::Metadatas,
                 IncludeField::Embeddings,
@@ -163,7 +163,9 @@ async fn collection_add_length_mismatch_errors() -> Result<()> {
     // Only one embedding for two ids.
     let embs = vec![vec![1.0_f32, 2.0_f32, 3.0_f32]];
 
-    let res = coll.add(&ids, Some(&embs), None, None).await;
+    let res = coll
+        .add_batch(AddBatch::new(&ids).embeddings(&embs))
+        .await;
     match res {
         Err(SeekDbError::InvalidInput(msg)) => {
             assert!(
@@ -209,49 +211,44 @@ async fn collection_dml_roundtrip() -> Result<()> {
     let id3 = format!("id3_{}", ts_suffix());
 
     // Add two items
-    coll.add(
-        &[id1.clone(), id2.clone()],
-        Some(&[vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]]),
-        Some(&[json!({"category":"a"}), json!({"category":"b"})]),
-        Some(&["doc1".into(), "doc2".into()]),
+    coll.add_batch(
+        AddBatch::new(&[id1.clone(), id2.clone()])
+            .embeddings(&[vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]])
+            .metadatas(&[json!({"category":"a"}), json!({"category":"b"})])
+            .documents(&["doc1".into(), "doc2".into()]),
     )
     .await?;
 
     // Basic get
     let got = coll
-        .get(Some(&[id1.clone()]), None, None, None, None, None)
+        .get_query(GetQuery::by_ids(&[id1.clone()]))
         .await?;
     assert_eq!(got.ids.len(), 1);
 
     // Update metadata only
-    coll.update(
-        &[id1.clone()],
-        None,
-        Some(&[json!({"category":"a","updated":true})]),
-        None,
+    coll.update_batch(
+        UpdateBatch::new(&[id1.clone()])
+            .metadatas(&[json!({"category":"a","updated":true})]),
     )
     .await?;
 
     // Upsert existing and new
-    coll.upsert(
-        &[id1.clone(), id3.clone()],
-        Some(&[vec![1.0, 2.0, 3.0], vec![3.0, 3.0, 3.0]]),
-        Some(&[json!({"category":"a2"}), json!({"category":"remove"})]),
-        Some(&["doc1-up".into(), "doc3".into()]),
+    coll.upsert_batch(
+        UpsertBatch::new(&[id1.clone(), id3.clone()])
+            .embeddings(&[vec![1.0, 2.0, 3.0], vec![3.0, 3.0, 3.0]])
+            .metadatas(&[json!({"category":"a2"}), json!({"category":"remove"})])
+            .documents(&["doc1-up".into(), "doc3".into()]),
     )
     .await?;
 
     // Delete by id
-    coll.delete(Some(&[id2.clone()]), None, None).await?;
+    coll.delete_query(DeleteQuery::by_ids(&[id2.clone()]))
+        .await?;
     // Delete by metadata filter
-    coll.delete(
-        None,
-        Some(&Filter::Eq {
-            field: "category".into(),
-            value: json!("remove"),
-        }),
-        None,
-    )
+    coll.delete_query(DeleteQuery::new().with_where_meta(&Filter::Eq {
+        field: "category".into(),
+        value: json!("remove"),
+    }))
     .await?;
 
     // Count and peek
@@ -300,8 +297,13 @@ async fn collection_quickstart_like_flow() -> Result<()> {
     let docs = vec!["doc1".to_string(), "doc2".to_string()];
     let metas = vec![json!({"score": 10}), json!({"score": 20})];
 
-    coll.add(&ids, Some(&embs), Some(&metas), Some(&docs))
-        .await?;
+    coll.add_batch(
+        AddBatch::new(&ids)
+            .embeddings(&embs)
+            .metadatas(&metas)
+            .documents(&docs),
+    )
+    .await?;
 
     let query = vec![vec![1.0, 2.0, 3.0]];
     let qr = coll
@@ -348,50 +350,47 @@ async fn collection_upsert_metadata_and_partial_fields() -> Result<()> {
     let id = format!("u1_{}", ts_suffix());
 
     // Seed record
-    coll.add(
-        &[id.clone()],
-        Some(&[vec![1.0, 2.0, 3.0]]),
-        Some(&[json!({"field": "orig", "cnt": 1})]),
-        Some(&["orig_doc".to_string()]),
+    coll.add_batch(
+        AddBatch::new(&[id.clone()])
+            .embeddings(&[vec![1.0, 2.0, 3.0]])
+            .metadatas(&[json!({"field": "orig", "cnt": 1})])
+            .documents(&["orig_doc".to_string()]),
     )
     .await?;
 
     // 1) metadata-only upsert: update cnt, keep doc and embedding
-    coll.upsert(
-        &[id.clone()],
-        None,
-        Some(&[json!({"field": "orig", "cnt": 2})]),
-        None,
+    coll.upsert_batch(
+        UpsertBatch::new(&[id.clone()])
+            .metadatas(&[json!({"field": "orig", "cnt": 2})]),
     )
     .await?;
 
     let got1 = coll
-        .get(Some(&[id.clone()]), None, None, None, None, None)
+        .get_query(GetQuery::by_ids(&[id.clone()]))
         .await?;
     assert_eq!(got1.documents.as_ref().unwrap()[0], "orig_doc");
     assert_eq!(got1.metadatas.as_ref().unwrap()[0]["cnt"], 2);
 
     // 2) document-only upsert: change doc, keep metadata and embedding
-    coll.upsert(&[id.clone()], None, None, Some(&["new_doc".to_string()]))
-        .await?;
+    coll.upsert_batch(
+        UpsertBatch::new(&[id.clone()]).documents(&["new_doc".to_string()]),
+    )
+    .await?;
     let got2 = coll
-        .get(Some(&[id.clone()]), None, None, None, None, None)
+        .get_query(GetQuery::by_ids(&[id.clone()]))
         .await?;
     assert_eq!(got2.documents.as_ref().unwrap()[0], "new_doc");
     assert_eq!(got2.metadatas.as_ref().unwrap()[0]["cnt"], 2);
 
     // 3) embeddings-only upsert: change vector, keep doc and metadata
-    coll.upsert(&[id.clone()], Some(&[vec![3.0, 2.0, 1.0]]), None, None)
-        .await?;
+    coll.upsert_batch(
+        UpsertBatch::new(&[id.clone()]).embeddings(&[vec![3.0, 2.0, 1.0]]),
+    )
+    .await?;
 
     let got3 = coll
-        .get(
-            Some(&[id.clone()]),
-            None,
-            None,
-            None,
-            None,
-            Some(&[
+        .get_query(
+            GetQuery::by_ids(&[id.clone()]).with_include(&[
                 IncludeField::Embeddings,
                 IncludeField::Documents,
                 IncludeField::Metadatas,
@@ -432,15 +431,13 @@ async fn collection_delete_without_any_condition_errors() -> Result<()> {
         .await?;
 
     // Insert one record so that a blanket DELETE would be dangerous.
-    coll.add(
-        &[format!("dg_{}", ts_suffix())],
-        Some(&[vec![1.0_f32, 2.0_f32, 3.0_f32]]),
-        None,
-        None,
+    coll.add_batch(
+        AddBatch::new(&[format!("dg_{}", ts_suffix())])
+            .embeddings(&[vec![1.0_f32, 2.0_f32, 3.0_f32]]),
     )
     .await?;
 
-    let res = coll.delete(None, None, None).await;
+    let res = coll.delete_query(DeleteQuery::new()).await;
     match res {
         Err(SeekDbError::InvalidInput(msg)) => {
             assert!(

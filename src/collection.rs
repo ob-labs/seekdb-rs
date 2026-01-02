@@ -10,6 +10,204 @@ use crate::server::ServerClient;
 use crate::types::{Embedding, GetResult, IncludeField, Metadata, QueryResult};
 use serde_json::{Value, json};
 
+/// Batch parameters for `Collection::add_batch`.
+///
+/// This provides a builder-style API around the lower-level
+/// `Collection::add(ids, embeddings, metadatas, documents)` signature.
+pub struct AddBatch<'a> {
+    ids: &'a [String],
+    embeddings: Option<&'a [Embedding]>,
+    metadatas: Option<&'a [Metadata]>,
+    documents: Option<&'a [String]>,
+}
+
+impl<'a> AddBatch<'a> {
+    pub fn new(ids: &'a [String]) -> Self {
+        Self {
+            ids,
+            embeddings: None,
+            metadatas: None,
+            documents: None,
+        }
+    }
+
+    pub fn embeddings(mut self, embeddings: &'a [Embedding]) -> Self {
+        self.embeddings = Some(embeddings);
+        self
+    }
+
+    pub fn metadatas(mut self, metadatas: &'a [Metadata]) -> Self {
+        self.metadatas = Some(metadatas);
+        self
+    }
+
+    pub fn documents(mut self, documents: &'a [String]) -> Self {
+        self.documents = Some(documents);
+        self
+    }
+}
+
+/// Batch parameters for `Collection::update_batch`.
+pub struct UpdateBatch<'a> {
+    ids: &'a [String],
+    embeddings: Option<&'a [Embedding]>,
+    metadatas: Option<&'a [Metadata]>,
+    documents: Option<&'a [String]>,
+}
+
+impl<'a> UpdateBatch<'a> {
+    pub fn new(ids: &'a [String]) -> Self {
+        Self {
+            ids,
+            embeddings: None,
+            metadatas: None,
+            documents: None,
+        }
+    }
+
+    pub fn embeddings(mut self, embeddings: &'a [Embedding]) -> Self {
+        self.embeddings = Some(embeddings);
+        self
+    }
+
+    pub fn metadatas(mut self, metadatas: &'a [Metadata]) -> Self {
+        self.metadatas = Some(metadatas);
+        self
+    }
+
+    pub fn documents(mut self, documents: &'a [String]) -> Self {
+        self.documents = Some(documents);
+        self
+    }
+}
+
+/// Batch parameters for `Collection::upsert_batch`.
+pub struct UpsertBatch<'a> {
+    ids: &'a [String],
+    embeddings: Option<&'a [Embedding]>,
+    metadatas: Option<&'a [Metadata]>,
+    documents: Option<&'a [String]>,
+}
+
+impl<'a> UpsertBatch<'a> {
+    pub fn new(ids: &'a [String]) -> Self {
+        Self {
+            ids,
+            embeddings: None,
+            metadatas: None,
+            documents: None,
+        }
+    }
+
+    pub fn embeddings(mut self, embeddings: &'a [Embedding]) -> Self {
+        self.embeddings = Some(embeddings);
+        self
+    }
+
+    pub fn metadatas(mut self, metadatas: &'a [Metadata]) -> Self {
+        self.metadatas = Some(metadatas);
+        self
+    }
+
+    pub fn documents(mut self, documents: &'a [String]) -> Self {
+        self.documents = Some(documents);
+        self
+    }
+}
+
+/// Builder-style query parameters for `Collection::get_query`.
+pub struct GetQuery<'a> {
+    ids: Option<&'a [String]>,
+    where_meta: Option<&'a Filter>,
+    where_doc: Option<&'a DocFilter>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    include: Option<&'a [IncludeField]>,
+}
+
+impl<'a> GetQuery<'a> {
+    pub fn new() -> Self {
+        Self {
+            ids: None,
+            where_meta: None,
+            where_doc: None,
+            limit: None,
+            offset: None,
+            include: None,
+        }
+    }
+
+    pub fn by_ids(ids: &'a [String]) -> Self {
+        Self::new().with_ids(ids)
+    }
+
+    pub fn with_ids(mut self, ids: &'a [String]) -> Self {
+        self.ids = Some(ids);
+        self
+    }
+
+    pub fn with_where_meta(mut self, filter: &'a Filter) -> Self {
+        self.where_meta = Some(filter);
+        self
+    }
+
+    pub fn with_where_doc(mut self, filter: &'a DocFilter) -> Self {
+        self.where_doc = Some(filter);
+        self
+    }
+
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn with_offset(mut self, offset: u32) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn with_include(mut self, include: &'a [IncludeField]) -> Self {
+        self.include = Some(include);
+        self
+    }
+}
+
+/// Builder-style delete parameters for `Collection::delete_query`.
+pub struct DeleteQuery<'a> {
+    ids: Option<&'a [String]>,
+    where_meta: Option<&'a Filter>,
+    where_doc: Option<&'a DocFilter>,
+}
+
+impl<'a> DeleteQuery<'a> {
+    pub fn new() -> Self {
+        Self {
+            ids: None,
+            where_meta: None,
+            where_doc: None,
+        }
+    }
+
+    pub fn by_ids(ids: &'a [String]) -> Self {
+        Self::new().with_ids(ids)
+    }
+
+    pub fn with_ids(mut self, ids: &'a [String]) -> Self {
+        self.ids = Some(ids);
+        self
+    }
+
+    pub fn with_where_meta(mut self, filter: &'a Filter) -> Self {
+        self.where_meta = Some(filter);
+        self
+    }
+
+    pub fn with_where_doc(mut self, filter: &'a DocFilter) -> Self {
+        self.where_doc = Some(filter);
+        self
+    }
+}
+
 /// High-level full-text / scalar query configuration for hybrid_search.
 /// Mirrors Python `Collection.hybrid_search(query=...)` semantics.
 #[derive(Clone, Debug)]
@@ -98,6 +296,12 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         self.metadata.as_ref()
     }
 
+    /// Builder-style wrapper around `add` that accepts an [`AddBatch`].
+    pub async fn add_batch(&self, batch: AddBatch<'_>) -> Result<()> {
+        self.add(batch.ids, batch.embeddings, batch.metadatas, batch.documents)
+            .await
+    }
+
     // DML
     pub async fn add(
         &self,
@@ -184,6 +388,12 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         }
 
         Ok(())
+    }
+
+    /// Builder-style wrapper around `update` that accepts an [`UpdateBatch`].
+    pub async fn update_batch(&self, batch: UpdateBatch<'_>) -> Result<()> {
+        self.update(batch.ids, batch.embeddings, batch.metadatas, batch.documents)
+            .await
     }
 
     pub async fn update(
@@ -299,6 +509,17 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         }
 
         Ok(())
+    }
+
+    /// Builder-style wrapper around `upsert` that accepts an [`UpsertBatch`].
+    pub async fn upsert_batch(&self, batch: UpsertBatch<'_>) -> Result<()> {
+        self.upsert(
+            batch.ids,
+            batch.embeddings,
+            batch.metadatas,
+            batch.documents,
+        )
+        .await
     }
 
     pub async fn upsert(
@@ -471,6 +692,11 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         }
 
         Ok(())
+    }
+
+    /// Builder-style wrapper around `delete` that accepts a [`DeleteQuery`].
+    pub async fn delete_query(&self, query: DeleteQuery<'_>) -> Result<()> {
+        self.delete(query.ids, query.where_meta, query.where_doc).await
     }
 
     pub async fn delete(
@@ -888,6 +1114,19 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         Err(SeekDbError::InvalidInput(
             "hybrid_search requires at least query or knn parameters".into(),
         ))
+    }
+
+    /// Builder-style wrapper around `get` that accepts a [`GetQuery`].
+    pub async fn get_query(&self, query: GetQuery<'_>) -> Result<GetResult> {
+        self.get(
+            query.ids,
+            query.where_meta,
+            query.where_doc,
+            query.limit,
+            query.offset,
+            query.include,
+        )
+        .await
     }
 
     pub async fn get(

@@ -23,18 +23,24 @@
 
 ## Installation
 
-Rust SDK 当前作为仓库内的子工程存在，尚未发布到 crates.io。推荐以 Workspace 本地依赖的方式使用。
+Rust SDK 已发布到 crates.io，推荐直接通过 crates.io 引入依赖：
 
 ```toml
-# Cargo.toml (在工作区的其他 crate 中)
+# Cargo.toml（在你的应用 / 工作区 crate 中）
 [dependencies]
-seekdb-rs = { path = "rust-sdk" }  # 路径按实际情况调整
+seekdb-rs = "0.1"
 ```
 
-构建：
+如果你在本仓库中一起开发 / 调试，也可以使用本地 path 依赖：
+
+```toml
+[dependencies]
+seekdb-rs = { path = "/path/to/seekdb-rs" }  # 路径按实际情况调整
+```
+
+本地构建：
 
 ```bash
-cd rust-sdk
 cargo build
 ```
 
@@ -322,6 +328,8 @@ async fn main() -> Result<(), SeekDbError> {
 > - Rust 当前要求创建时提供 `HnswConfig`，否则会返回错误：  
 >   `SeekDbError::Config("HnswConfig must be provided when creating a collection")`。
 
+此外，Collection 名称必须非空，只能包含 ASCII 字母/数字/下划线（`[a-zA-Z0-9_]`），并且生成的物理表名（包含 `c$v1$` 前缀）长度不能超过 64 个字符；否则在执行任何 SQL 之前会返回 `SeekDbError::InvalidInput`。
+
 ### 3.2 Getting a Collection
 
 ```rust
@@ -385,12 +393,12 @@ Rust 版已实现与 Python 版语义基本一致的 DML 操作，并且在存�
 > ✅ 支持：显式提供 `embeddings` 的 `add/update/upsert/delete`  
 > ✅ 支持：在 Collection 设置了 `embedding_function` 且仅提供 `documents` 时，`add/update/upsert` 自动生成向量（`upsert` 在无 embedding_function 时的 doc-only 调用会保留原有向量不变）
 
-### 4.1 Add Data
+### 4.1 Add Data（推荐使用 `AddBatch`）
 
-`add()` 插入新的记录；若主键 `_id` 冲突会由底层数据库报错。
+`add()` 仍然可用，但推荐用 builder 风格的 `AddBatch` 包掉所有参数，可读性更好、以后扩展也更方便。
 
 ```rust
-use seekdb_rs::{Embedding, Metadata};
+use seekdb_rs::{AddBatch, Embedding, Metadata};
 use serde_json::json;
 
 let ids = vec!["item1".to_string(), "item2".to_string()];
@@ -401,8 +409,13 @@ let metadatas: Vec<Metadata> = vec![
     json!({"category": "ML", "score": 88}),
 ];
 
-coll.add(&ids, Some(&embeddings), Some(&metadatas), Some(&documents))
-    .await?;
+coll.add_batch(
+    AddBatch::new(&ids)
+        .embeddings(&embeddings)
+        .documents(&documents)
+        .metadatas(&metadatas),
+)
+.await?;
 ```
 
 也可以在创建 Collection 时绑定一个 `EmbeddingFunction`，只传 `documents` 让 SDK 自动生成向量：
@@ -428,35 +441,35 @@ let ids = vec!["auto1".to_string(), "auto2".to_string()];
 let docs = vec!["hello rust".to_string(), "seekdb vector".to_string()];
 
 // 未显式传入 embeddings，会自动调用 embedding_function 生成
-coll.add(&ids, None, None, Some(&docs)).await?;
+coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
 ```
 
-### 4.2 Update Data
+### 4.2 Update Data（推荐使用 `UpdateBatch`）
 
-`update()` 更新已有记录；记录必须存在，否则底层不会插入新行。
+`update()` 也保留，但更推荐通过 `UpdateBatch` 来组织参数：
 
 ```rust
+use seekdb_rs::UpdateBatch;
+
 // 仅更新 metadata（允许）
-coll.update(
-    &["item1".to_string()],
-    None, // 不更新向量
-    Some(&[serde_json::json!({"category": "AI", "score": 98})]),
-    None,
+coll.update_batch(
+    UpdateBatch::new(&["item1".to_string()])
+        .metadatas(&[serde_json::json!({"category": "AI", "score": 98})]),
 )
 .await?;
 
 // 同时更新 embeddings 和 documents
-coll.update(
-    &["item1".to_string(), "item2".to_string()],
-    Some(&[vec![0.9, 0.8, 0.7], vec![0.6, 0.5, 0.4]]),
-    Some(&[
-        serde_json::json!({"category": "AI"}),
-        serde_json::json!({"category": "ML"}),
-    ]),
-    Some(&[
-        "Updated document 1".to_string(),
-        "Updated document 2".to_string(),
-    ]),
+coll.update_batch(
+    UpdateBatch::new(&["item1".to_string(), "item2".to_string()])
+        .embeddings(&[vec![0.9, 0.8, 0.7], vec![0.6, 0.5, 0.4]])
+        .metadatas(&[
+            serde_json::json!({"category": "AI"}),
+            serde_json::json!({"category": "ML"}),
+        ])
+        .documents(&[
+            "Updated document 1".to_string(),
+            "Updated document 2".to_string(),
+        ]),
 )
 .await?;
 ```
@@ -469,37 +482,34 @@ coll.update(
 - `documents` / `metadatas` 允许为空；只对提供的字段生成 `SET` 子句。
 - 若未显式提供 `embeddings`，但提供了 `documents` 且 Collection 绑定了 `embedding_function`，会自动对这些文档生成向量并更新 `embedding` 列。
 
-### 4.3 Upsert Data
+### 4.3 Upsert Data（推荐使用 `UpsertBatch`）
 
-`upsert()` 在记录存在时更新，不存在时插入。支持仅更新部分字段（metadata-only / documents-only / embeddings-only）。
+`upsert()` 在记录存在时更新，不存在时插入。支持仅更新部分字段（metadata-only / documents-only / embeddings-only）。同样推荐用 `UpsertBatch`：
 
 ```rust
+use seekdb_rs::UpsertBatch;
+
 let id = "item1".to_string();
 
 // 1) 首次插入
-coll.upsert(
-    &[id.clone()],
-    Some(&[vec![1.0, 2.0, 3.0]]),
-    Some(&[serde_json::json!({"tag": "init", "cnt": 1})]),
-    Some(&["doc1".to_string()]),
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()])
+        .embeddings(&[vec![1.0, 2.0, 3.0]])
+        .metadatas(&[serde_json::json!({"tag": "init", "cnt": 1})])
+        .documents(&["doc1".to_string()]),
 )
 .await?;
 
 // 2) metadata-only upsert：只更新 metadata，保留 doc 和 embedding
-coll.upsert(
-    &[id.clone()],
-    None,
-    Some(&[serde_json::json!({"tag": "init", "cnt": 2})]),
-    None,
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()])
+        .metadatas(&[serde_json::json!({"tag": "init", "cnt": 2})]),
 )
 .await?;
 
 // 3) document-only upsert：只更新 doc
-coll.upsert(
-    &[id.clone()],
-    None,
-    None,
-    Some(&["new_doc".to_string()]),
+coll.upsert_batch(
+    UpsertBatch::new(&[id.clone()]).documents(&["new_doc".to_string()]),
 )
 .await?;
 ```
@@ -517,17 +527,17 @@ coll.upsert(
   - 若提供了 `documents` 且 Collection 有 `embedding_function`，则会自动生成新的向量；  
     若 Collection 没有 `embedding_function`，则 document-only upsert 仅更新文档、保留原有向量。
 
-### 4.4 Delete Data
+### 4.4 Delete Data（推荐使用 `DeleteQuery`）
 
 对应 Python 的 `collection.delete(ids=..., where=..., where_document=...)`。  
-Rust 使用 `Filter` / `DocFilter` 来表达条件。
+Rust 使用 `Filter` / `DocFilter` + builder 风格的 `DeleteQuery` 来表达条件。
 
 ```rust
-use seekdb_rs::{Filter, DocFilter};
+use seekdb_rs::{DeleteQuery, Filter, DocFilter};
 use serde_json::json;
 
 // 按 ID 删除
-coll.delete(Some(&vec!["id1".to_string(), "id2".to_string()]), None, None)
+coll.delete_query(DeleteQuery::by_ids(&["id1".to_string(), "id2".to_string()]))
     .await?;
 
 // 按 metadata 条件删除
@@ -535,11 +545,13 @@ let where_meta = Filter::Gte {
     field: "score".into(),
     value: json!(90),
 };
-coll.delete(None, Some(&where_meta), None).await?;
+coll.delete_query(DeleteQuery::new().with_where_meta(&where_meta))
+    .await?;
 
 // 按文档全文检索条件删除
 let where_doc = DocFilter::Contains("machine learning".into());
-coll.delete(None, None, Some(&where_doc)).await?;
+coll.delete_query(DeleteQuery::new().with_where_doc(&where_doc))
+    .await?;
 ```
 
 约束：
@@ -606,15 +618,15 @@ println!("query result ids: {:?}", result.ids);
   - 不返回 `embeddings`；
   - 总是返回 `distances`。
 
-### 5.2 Get (Retrieve by IDs or Filters)
+### 5.2 Get (Retrieve by IDs or Filters，推荐使用 `GetQuery`)
 
 ```rust
-use seekdb_rs::{Filter, DocFilter};
+use seekdb_rs::{Filter, DocFilter, GetQuery};
 use serde_json::json;
 
 // 1) 按单个 ID 获取
 let got = coll
-    .get(Some(&["123".to_string()]), None, None, None, None, None)
+    .get_query(GetQuery::by_ids(&["123".to_string()]))
     .await?;
 
 // 2) 按 metadata 过滤
@@ -623,19 +635,24 @@ let where_meta = Filter::Eq {
     value: json!("AI"),
 };
 let got = coll
-    .get(None, Some(&where_meta), None, Some(10), None, None)
+    .get_query(GetQuery::new().with_where_meta(&where_meta).with_limit(10))
     .await?;
 
 // 3) 按文档全文过滤
 let where_doc = DocFilter::Contains("machine learning".into());
 let got = coll
-    .get(None, None, Some(&where_doc), Some(10), None, None)
+    .get_query(GetQuery::new().with_where_doc(&where_doc).with_limit(10))
     .await?;
 
 // 4) 分页 + 指定 include 字段
 let include = &[seekdb_rs::IncludeField::Documents, seekdb_rs::IncludeField::Metadatas];
 let got = coll
-    .get(None, None, None, Some(2), Some(1), Some(include))
+    .get_query(
+        GetQuery::new()
+            .with_limit(2)
+            .with_offset(1)
+            .with_include(include),
+    )
     .await?;
 ```
 
