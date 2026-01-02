@@ -183,14 +183,18 @@ impl ServerClient {
     }
 
     pub async fn list_collections(&self) -> Result<Vec<String>> {
-        let rows = match self.fetch_all("SHOW TABLES LIKE 'c$v1$%'").await {
+        let prefix = CollectionNames::TABLE_PREFIX;
+        let like_pattern = format!("{prefix}%");
+        let show_sql = format!("SHOW TABLES LIKE '{like_pattern}'");
+
+        let rows = match self.fetch_all(&show_sql).await {
             Ok(rows) => rows,
             Err(_) => {
                 // Fallback to information_schema if SHOW TABLES is not supported
                 let sql = format!(
                     "SELECT TABLE_NAME FROM information_schema.TABLES \
-                     WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME LIKE 'c$v1$%'",
-                    self.database
+                     WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME LIKE '{}'",
+                    self.database, like_pattern
                 );
                 self.fetch_all(&sql).await?
             }
@@ -200,7 +204,7 @@ impl ServerClient {
         for row in rows {
             // SHOW TABLES column name varies; take first column
             if let Ok(table_name) = row.try_get::<String, _>(0) {
-                if let Some(name) = table_name.strip_prefix("c$v1$") {
+                if let Some(name) = table_name.strip_prefix(CollectionNames::TABLE_PREFIX) {
                     names.push(name.to_string());
                 }
             }

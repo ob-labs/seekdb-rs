@@ -328,7 +328,7 @@ async fn main() -> Result<(), SeekDbError> {
 > - Rust 当前要求创建时提供 `HnswConfig`，否则会返回错误：  
 >   `SeekDbError::Config("HnswConfig must be provided when creating a collection")`。
 
-此外，Collection 名称必须非空，只能包含 ASCII 字母/数字/下划线（`[a-zA-Z0-9_]`），最长 512 个字符；否则在执行任何 SQL 之前会返回 `SeekDbError::InvalidInput`。
+此外，Collection 名称必须非空，只能包含 ASCII 字母/数字/下划线（`[a-zA-Z0-9_]`），并且生成的物理表名（包含 `c$v1$` 前缀）长度不能超过 64 个字符；否则在执行任何 SQL 之前会返回 `SeekDbError::InvalidInput`。
 
 ### 3.2 Getting a Collection
 

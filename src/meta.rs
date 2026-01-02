@@ -4,15 +4,20 @@ use crate::error::{Result, SeekDbError};
 pub struct CollectionNames;
 
 impl CollectionNames {
-    /// Maximum allowed logical collection name length.
-    pub const MAX_NAME_LEN: usize = 512;
+    /// Physical table name prefix for collections.
+    pub const TABLE_PREFIX: &'static str = "c$v1$";
+
+    /// Maximum allowed physical table name length.
+    ///
+    /// This limit applies to the full table name, including `TABLE_PREFIX`.
+    pub const MAX_TABLE_NAME_LEN: usize = 64;
 
     /// Validate a logical collection name.
     ///
     /// Current rules:
     /// - must be non-empty
     /// - must only contain ASCII letters, digits, or underscore: `[a-zA-Z0-9_]`
-    /// - length must be at most `MAX_NAME_LEN`
+    /// - the resulting physical table name (`TABLE_PREFIX` + name) must not exceed `MAX_TABLE_NAME_LEN`
     pub fn validate(name: &str) -> Result<()> {
         if name.is_empty() {
             return Err(SeekDbError::InvalidInput(
@@ -20,10 +25,11 @@ impl CollectionNames {
             ));
         }
 
-        if name.len() > Self::MAX_NAME_LEN {
+        let physical_len = Self::TABLE_PREFIX.len() + name.len();
+        if physical_len > Self::MAX_TABLE_NAME_LEN {
             return Err(SeekDbError::InvalidInput(format!(
-                "collection name too long (max {} characters)",
-                Self::MAX_NAME_LEN
+                "collection name too long; physical table name exceeds {} characters",
+                Self::MAX_TABLE_NAME_LEN
             )));
         }
 
@@ -42,7 +48,7 @@ impl CollectionNames {
     /// Build the physical table name for a collection.
     pub fn table_name(name: &str) -> String {
         // Keep identical naming to the Python client: c$v1${collection_name}
-        format!("c$v1${}", name)
+        format!("{}{}", Self::TABLE_PREFIX, name)
     }
 }
 
@@ -80,7 +86,9 @@ mod tests {
 
     #[test]
     fn too_long_collection_name_fails() {
-        let long_name = "a".repeat(CollectionNames::MAX_NAME_LEN + 1);
+        let allowed_len =
+            CollectionNames::MAX_TABLE_NAME_LEN - CollectionNames::TABLE_PREFIX.len();
+        let long_name = "a".repeat(allowed_len + 1);
         let err = CollectionNames::validate(&long_name).unwrap_err();
         assert!(matches!(err, SeekDbError::InvalidInput(_)));
     }

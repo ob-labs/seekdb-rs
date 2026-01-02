@@ -271,7 +271,7 @@ async fn main() -> Result<(), SeekDbError> {
 If `HnswConfig` is missing, collection creation fails with:
 `SeekDbError::Config("HnswConfig must be provided when creating a collection")`.
 
-Collection names must be non-empty, use only ASCII letters/digits/underscore (`[a-zA-Z0-9_]`), and be at most 512 characters long; otherwise `SeekDbError::InvalidInput` is returned before any SQL is executed.
+Collection names must be non-empty, use only ASCII letters/digits/underscore (`[a-zA-Z0-9_]`), and the resulting physical table name (including the `c$v1$` prefix) must not exceed 64 characters; otherwise `SeekDbError::InvalidInput` is returned before any SQL is executed.
 
 ### 3.2 Getting a Collection
 
