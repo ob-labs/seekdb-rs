@@ -3,13 +3,13 @@
 use anyhow::Result;
 use seekdb_rs::{
     collection::{HybridKnn, HybridQuery, HybridRank},
-    AddBatch, DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField, SeekDbError,
-    ServerClient,
+    AddBatch, AdminApi, DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField,
+    SeekDbError,
 };
 use serde_json::json;
 
 mod common;
-use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Hybrid search should succeed when using embedding_function for query text.
 #[tokio::test]
@@ -17,13 +17,13 @@ async fn collection_hybrid_search_basic() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_hybrid_ok_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("hybrid_ok_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -70,13 +70,13 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_hybrid_adv_vec_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("hybrid_adv_vec_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -146,13 +146,13 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_hybrid_adv_full_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("hybrid_adv_full_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -256,13 +256,13 @@ async fn collection_hybrid_search_not_implemented() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_hybrid_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("hybrid_coll_{}", ts_suffix());
     let hnsw = HnswConfig {

@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use crate::backend::{BackendRow, SqlBackend};
+use crate::backend::{BackendRow, CollectionBackend, QueryParam};
 use crate::config::DistanceMetric;
 use crate::embedding::EmbeddingFunction;
 use crate::error::{Result, SeekDbError};
 use crate::filters::{DocFilter, Filter, build_where_clause};
 use crate::meta::CollectionNames;
-use crate::server::ServerClient;
 use crate::types::{Embedding, GetResult, IncludeField, Metadata, QueryResult};
 use serde_json::{Value, json};
 
@@ -246,7 +245,7 @@ pub enum HybridRank {
 /// Represents a single collection/table in seekdb.
 #[derive(Clone)]
 pub struct Collection<Ef = Box<dyn EmbeddingFunction>> {
-    client: Arc<ServerClient>,
+    client: Arc<dyn CollectionBackend>,
     name: String,
     id: Option<String>,
     dimension: u32,
@@ -257,7 +256,7 @@ pub struct Collection<Ef = Box<dyn EmbeddingFunction>> {
 
 impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
     pub fn new(
-        client: Arc<ServerClient>,
+        client: Arc<dyn CollectionBackend>,
         name: String,
         id: Option<String>,
         dimension: u32,
@@ -370,21 +369,24 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         );
 
         for i in 0..ids.len() {
-            let id_bytes = ids[i].as_bytes();
+            let id_bytes = ids[i].as_bytes().to_vec();
             let doc = documents
                 .and_then(|d| d.get(i))
                 .map(|s| s.as_str())
-                .unwrap_or("");
-            let meta = metadatas.and_then(|m| m.get(i));
-            let emb = &embeddings[i];
-
-            sqlx::query(&sql)
-                .bind(id_bytes)
-                .bind(doc)
-                .bind(meta.map(|v| serde_json::to_string(v).unwrap_or_default()))
-                .bind(vector_to_string(emb))
-                .execute(self.client.pool())
-                .await?;
+                .unwrap_or("")
+                .to_string();
+            let meta_str = metadatas
+                .and_then(|m| m.get(i))
+                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                .unwrap_or_default();
+            let emb_str = vector_to_string(&embeddings[i]);
+            let params = [
+                QueryParam::Bytes(id_bytes),
+                QueryParam::String(doc),
+                QueryParam::String(meta_str),
+                QueryParam::String(emb_str),
+            ];
+            self.client.execute_with_params(&sql, &params).await?;
         }
 
         Ok(())
@@ -500,12 +502,9 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = format!("UPDATE `{table}` SET {set_clause} WHERE _id = ?");
-            let mut query = sqlx::query(&sql);
-            for (_, v) in &sets {
-                query = query.bind(v);
-            }
-            query = query.bind(ids[i].as_bytes());
-            query.execute(self.client.pool()).await?;
+            let mut params: Vec<QueryParam> = sets.iter().map(|(_, v)| QueryParam::String(v.clone())).collect();
+            params.push(QueryParam::Bytes(ids[i].as_bytes().to_vec()));
+            self.client.execute_with_params(&sql, &params).await?;
         }
 
         Ok(())
@@ -664,30 +663,27 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                         .collect::<Vec<_>>()
                         .join(", ");
                     let sql = format!("UPDATE `{table}` SET {set_clause} WHERE _id = ?");
-                    let mut query = sqlx::query(&sql);
-                    for (_, v) in &sets {
-                        query = query.bind(v);
-                    }
-                    query = query.bind(id.as_bytes());
-                    query.execute(self.client.pool()).await?;
+                    let mut params: Vec<QueryParam> = sets.iter().map(|(_, v)| QueryParam::String(v.clone())).collect();
+                    params.push(QueryParam::Bytes(id.as_bytes().to_vec()));
+                    self.client.execute_with_params(&sql, &params).await?;
                 }
             } else {
                 // Insert new row
                 let sql = format!(
                     "INSERT INTO `{table}` (_id, document, metadata, embedding) VALUES (?, ?, ?, ?)"
                 );
-                sqlx::query(&sql)
-                    .bind(id.as_bytes())
-                    .bind(final_doc.unwrap_or_default())
-                    .bind(serde_json::to_string(&final_meta).unwrap_or_default())
-                    .bind(
+                let params = [
+                    QueryParam::Bytes(id.as_bytes().to_vec()),
+                    QueryParam::String(final_doc.unwrap_or_default()),
+                    QueryParam::String(serde_json::to_string(&final_meta).unwrap_or_default()),
+                    QueryParam::String(
                         final_emb
                             .as_ref()
                             .map(vector_to_string)
                             .unwrap_or_else(|| "[]".into()),
-                    )
-                    .execute(self.client.pool())
-                    .await?;
+                    ),
+                ];
+                self.client.execute_with_params(&sql, &params).await?;
             }
         }
 
@@ -714,11 +710,8 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         let table = CollectionNames::table_name(&self.name);
         let sql_where = build_where_clause(where_meta, where_doc, ids);
         let sql = format!("DELETE FROM `{table}` {}", sql_where.clause);
-        let mut query = sqlx::query(&sql);
-        for p in sql_where.params {
-            query = bind_metadata(query, &p);
-        }
-        query.execute(self.client.pool()).await?;
+        let params: Vec<QueryParam> = sql_where.params.iter().map(QueryParam::from_metadata_value).collect();
+        self.client.execute_with_params(&sql, &params).await?;
         Ok(())
     }
 
@@ -759,11 +752,8 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 limit = n_results
             );
 
-            let mut query = sqlx::query(&sql);
-            for p in &sql_where.params {
-                query = bind_metadata(query, p);
-            }
-            let rows = query.fetch_all(self.client.pool()).await?;
+            let params: Vec<QueryParam> = sql_where.params.iter().map(QueryParam::from_metadata_value).collect();
+            let rows = self.client.fetch_all_with_params(&sql, &params).await?;
 
             let mut ids = Vec::new();
             let mut docs = Vec::new();
@@ -772,7 +762,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
             let mut dists = Vec::new();
 
             for row in rows {
-                ids.push(id_from_row(&row));
+                ids.push(id_from_row(row.as_ref()));
                 if include_documents(include) {
                     let doc = row
                         .get_string("document")
@@ -781,7 +771,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                     docs.push(doc);
                 }
                 if include_metadatas(include) {
-                    metas.push(metadata_from_row(&row));
+                    metas.push(metadata_from_row(row.as_ref()));
                 }
                 if include_embeddings(include) {
                     if let Some(v) = row.get_string("embedding").unwrap_or(None) {
@@ -980,12 +970,12 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         let table = CollectionNames::table_name(&self.name);
         let escaped = search_parm_json.replace('\'', "''");
         let set_sql = format!("SET @search_parm = '{escaped}'");
-        SqlBackend::execute(&*self.client, &set_sql).await?;
+        self.client.execute(&set_sql).await?;
 
         let get_sql = format!(
             "SELECT DBMS_HYBRID_SEARCH.GET_SQL('{table}', @search_parm) AS query_sql FROM dual"
         );
-        let rows = SqlBackend::fetch_all(&*self.client, &get_sql).await?;
+        let rows = self.client.fetch_all(&get_sql).await?;
         if rows.is_empty() {
             return Ok(empty_query_result(include));
         }
@@ -1001,8 +991,8 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
             return Ok(empty_query_result(include));
         }
 
-        let result_rows = SqlBackend::fetch_all(&*self.client, &query_sql).await?;
-        Ok(transform_hybrid_rows(result_rows, include))
+        let result_rows = self.client.fetch_all(&query_sql).await?;
+        Ok(transform_hybrid_rows(&result_rows, include))
     }
 
     async fn hybrid_search_advanced_knn_only(
@@ -1152,11 +1142,8 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let mut query = sqlx::query(&sql);
-        for p in &sql_where.params {
-            query = bind_metadata(query, p);
-        }
-        let rows = query.fetch_all(self.client.pool()).await?;
+        let params: Vec<QueryParam> = sql_where.params.iter().map(QueryParam::from_metadata_value).collect();
+        let rows = self.client.fetch_all_with_params(&sql, &params).await?;
 
         let mut result = GetResult {
             ids: Vec::new(),
@@ -1178,7 +1165,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
         };
 
         for row in rows {
-            result.ids.push(id_from_row(&row));
+            result.ids.push(id_from_row(row.as_ref()));
             if let Some(docs) = result.documents.as_mut() {
                 let doc = row
                     .get_string("document")
@@ -1187,7 +1174,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 docs.push(doc);
             }
             if let Some(metas) = result.metadatas.as_mut() {
-                metas.push(metadata_from_row(&row));
+                metas.push(metadata_from_row(row.as_ref()));
             }
             if let Some(embs) = result.embeddings.as_mut() {
                 let emb = row
@@ -1205,8 +1192,11 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
     pub async fn count(&self) -> Result<u64> {
         let table = CollectionNames::table_name(&self.name);
         let sql = format!("SELECT COUNT(*) as cnt FROM `{table}`");
-        let row = sqlx::query(&sql).fetch_one(self.client.pool()).await?;
-        let cnt = row.get_i64("cnt").unwrap_or(Some(0)).unwrap_or(0);
+        let rows = self.client.fetch_all(&sql).await?;
+        let cnt = rows
+            .first()
+            .and_then(|r| r.get_i64("cnt").ok().flatten())
+            .unwrap_or(0);
         Ok(cnt as u64)
     }
 
@@ -1327,7 +1317,7 @@ fn include_embeddings(include: Option<&[IncludeField]>) -> bool {
     }
 }
 
-fn id_from_row<R: BackendRow>(row: &R) -> String {
+fn id_from_row<R: BackendRow + ?Sized>(row: &R) -> String {
     if let Ok(Some(bytes)) = row.get_bytes("_id") {
         String::from_utf8_lossy(&bytes).into_owned()
     } else if let Ok(Some(s)) = row.get_string("_id") {
@@ -1337,30 +1327,7 @@ fn id_from_row<R: BackendRow>(row: &R) -> String {
     }
 }
 
-fn bind_metadata<'q>(
-    query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
-    value: &Value,
-) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
-    match value {
-        Value::String(s) => query.bind(s.clone()),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                query.bind(i)
-            } else if let Some(u) = n.as_u64() {
-                query.bind(u as i64)
-            } else if let Some(f) = n.as_f64() {
-                query.bind(f)
-            } else {
-                query.bind(n.to_string())
-            }
-        }
-        Value::Bool(b) => query.bind(*b),
-        Value::Null => query.bind::<Option<i32>>(None),
-        other => query.bind(other.to_string()),
-    }
-}
-
-fn metadata_from_row<R: BackendRow>(row: &R) -> Value {
+fn metadata_from_row<R: BackendRow + ?Sized>(row: &R) -> Value {
     // Try read as string first
     if let Ok(Some(s)) = row.get_string("metadata") {
         if let Ok(v) = serde_json::from_str::<Value>(&s) {
@@ -1418,10 +1385,7 @@ fn empty_query_result(include: Option<&[IncludeField]>) -> QueryResult {
     }
 }
 
-fn transform_hybrid_rows<R: BackendRow>(
-    rows: Vec<R>,
-    include: Option<&[IncludeField]>,
-) -> QueryResult {
+fn transform_hybrid_rows(rows: &[Box<dyn BackendRow>], include: Option<&[IncludeField]>) -> QueryResult {
     let mut ids = Vec::new();
     let mut docs = Vec::new();
     let mut metas = Vec::new();
@@ -1429,32 +1393,33 @@ fn transform_hybrid_rows<R: BackendRow>(
     let mut dists = Vec::new();
 
     for row in rows {
-        ids.push(id_from_row(&row));
+        let r = row.as_ref();
+        ids.push(id_from_row(r));
         if include_documents(include) {
-            let doc = row
+            let doc = r
                 .get_string("document")
                 .unwrap_or(None)
                 .unwrap_or_default();
             docs.push(doc);
         }
         if include_metadatas(include) {
-            metas.push(metadata_from_row(&row));
+            metas.push(metadata_from_row(r));
         }
         if include_embeddings(include) {
-            let emb = row
+            let emb = r
                 .get_string("embedding")
                 .unwrap_or(None)
-                .or_else(|| row.get_string("_embedding").unwrap_or(None))
+                .or_else(|| r.get_string("_embedding").unwrap_or(None))
                 .map(parse_vector_string)
                 .unwrap_or_default();
             embs.push(emb);
         }
-        let dist = row
+        let dist = r
             .get_f32("distance")
             .unwrap_or(None)
-            .or_else(|| row.get_f32("_distance").unwrap_or(None))
-            .or_else(|| row.get_f32("_score").unwrap_or(None))
-            .or_else(|| row.get_f32("score").unwrap_or(None))
+            .or_else(|| r.get_f32("_distance").unwrap_or(None))
+            .or_else(|| r.get_f32("_score").unwrap_or(None))
+            .or_else(|| r.get_f32("score").unwrap_or(None))
             .unwrap_or(0.0);
         dists.push(dist);
     }

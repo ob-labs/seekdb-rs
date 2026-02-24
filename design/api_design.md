@@ -1,11 +1,13 @@
-# seekdb-rs 接口设计（Server 模式 SDK）
+# seekdb-rs 接口设计
 
 > 设计基准：尽量对齐 Python 版 `pyseekdb` 的语义与行为，但采用 Rust 风格的类型系统与错误处理。  
-> 覆盖范围：当前仅包含 **Server 模式**（通过 MySQL 协议访问 seekdb / OceanBase），嵌入式模式后续演进。
+> 覆盖范围：**统一 Client**（path => 嵌入式，host/port => Server）、**统一 AdminClient**（path => 嵌入式，host => Server）；Server 模式通过 MySQL 协议访问 SeekDB / OceanBase，嵌入式模式通过原生 SeekDB C 库直连。
 
-风险：
+要点：
 
-- 嵌入式模式（embedded）目前尚未实现。若未来要在 Rust 侧直接复用 Python 实现，可能需要通过 PyO3 调用 Python 包，需要单独调研，优先级低于 server 模式。
+- **统一入口**：与 pyseekdb 一致，推荐使用 `Client::builder()`（`.path(...)` 为嵌入式，`.host(...).port(...)` 为 Server）和 `AdminClient::builder()`，由配置区分模式。
+- **Bootstrap 库**：AdminClient（Server / Embedded）均使用 **`information_schema`** 作为 admin 连接库，不传空库名。
+- **可选直接使用**：需要时仍可直接使用 `ServerClient` / `EmbeddedClient` 及其专用 API（如 `from_env()`）。
 
 ---
 
@@ -29,20 +31,23 @@
 主要模块及职责：
 
 - `error.rs`：统一错误类型 `SeekDbError` 与 `Result<T>` 别名。
-- `config.rs`：`ServerConfig`、`HnswConfig`、`DistanceMetric` 等配置类型。
+- `config.rs`：`ServerConfig`、`EmbeddedConfig`、`HnswConfig`、`DistanceMetric` 等配置类型。
 - `types.rs`：`QueryResult`、`GetResult`、`IncludeField`、`Database` 等公共类型。
-- `server.rs`：`ServerClient`（Server-only 客户端）。
-- `admin.rs`：`AdminApi` trait 与 `AdminClient` 封装数据库管理接口。
-- `collection.rs`：`Collection<Ef>`（封装向量集合的 DML/DQL/Hybrid 操作）。
+- `client.rs`（feature = `server` 或 `embedded`）：统一入口 `Client` 枚举与 `ClientBuilder`；根据 `path`（嵌入式）或 `host`/`port`（Server）构建 `Client::Embedded` 或 `Client::Server`，默认未配置时使用嵌入式、路径 `seekdb.db`。
+- `client_trait.rs`：`SeekDbClient` trait，抽象 `create_collection` / `get_collection` 等，供 `ServerClient` 与 `EmbeddedClient` 实现。
+- `server.rs`（feature = `server`）：`ServerClient`，基于 MySQL 协议的连接与 Collection 管理。
+- `embedded.rs`（feature = `embedded`）：`EmbeddedClient` 与 `EmbeddedClientBuilder`，通过 SeekDB C 库直连本地库。
+- `admin.rs`：`AdminApi` trait 与统一 `AdminClient` 枚举（Server / Embedded）；均使用 bootstrap 库 `information_schema`。
+- `collection.rs`：`Collection<Ef>`，持有 `Arc<dyn CollectionBackend>`，封装向量集合的 DML/DQL/Hybrid 操作。
+- `backend.rs`：`CollectionBackend`、`BackendRow`、`SqlBackend` 等抽象，使 `Collection` 可同时对接 Server 与 Embedded 后端。
 - `embedding.rs`：`EmbeddingFunction` trait 与默认实现 `DefaultEmbedding`（feature = `embedding`）。
 - `filters.rs`：`Filter` / `DocFilter` 抽象与 SQL WHERE 子句生成。
 - `meta.rs`：Collection 表名与列名约定（`c$v1${name}` 等）。
-- `backend.rs`：`SqlBackend` / `BackendRow` 抽象，用于 decouple driver 与高层逻辑。
 
 在 `lib.rs` 中：
 
 - 通过 `pub mod ...` 暴露上述模块；
-- 通过 `pub use` 聚合常用类型（`ServerClient`、`AdminClient`、`AdminApi`、`Collection`、`ServerConfig`、`HnswConfig`、`DistanceMetric`、`Filter`、`DocFilter`、`QueryResult`、`GetResult` 等）
+- 通过 `pub use` 聚合常用类型：`Client`、`ClientBuilder`、`AdminClient`、`AdminClientBuilder`、`AdminApi`、`ServerClient`、`EmbeddedClient`、`EmbeddedClientBuilder`、`Collection`、`SeekDbClient`、`ServerConfig`、`EmbeddedConfig`、`HnswConfig`、`DistanceMetric`、`Filter`、`DocFilter`、`QueryResult`、`GetResult` 等。
 
 ---
 
@@ -102,6 +107,18 @@ impl ServerConfig {
     /// SERVER_HOST / SERVER_PORT / SERVER_TENANT /
     /// SERVER_DATABASE / SERVER_USER / SERVER_PASSWORD /
     /// SERVER_MAX_CONNECTIONS（可选，默认 5）。
+    pub fn from_env() -> Result<Self>;
+}
+
+/// 嵌入式模式配置（feature = "embedded"）。可与 ClientBuilder::from_embedded_config 配合使用。
+#[derive(Clone, Debug)]
+pub struct EmbeddedConfig {
+    pub db_dir: String,
+    pub database: String,
+    pub autocommit: bool,
+    pub port: Option<i32>,
+}
+impl EmbeddedConfig {
     pub fn from_env() -> Result<Self>;
 }
 
@@ -180,129 +197,91 @@ pub struct GetResult {
 
 ---
 
-## 5. ServerClient 与 Admin 接口设计
+## 5. 统一 Client、Server/Embedded 与 Admin 接口设计
 
-### 5.1 ServerClient
+### 5.1 统一 Client（client.rs）
 
-当前实现：
+与 pyseekdb 对齐的推荐入口：`Client::builder()`，通过配置区分嵌入式与 Server 模式。
 
 ```rust
 #[derive(Clone)]
-pub struct ServerClient {
-    pool: sqlx::MySqlPool,
-    tenant: String,
-    database: String,
+pub enum Client {
+    #[cfg(feature = "server")]
+    Server(ServerClient),
+    #[cfg(feature = "embedded")]
+    Embedded(EmbeddedClient),
 }
 
-impl ServerClient {
-    /// 通过参数建立连接池。
-    pub async fn connect(
-        host: &str,
-        port: u16,
-        tenant: &str,
-        database: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<Self>;
-
-    /// 从 ServerConfig 构建。
-    pub async fn from_config(config: ServerConfig) -> Result<Self>;
-
-    /// 从环境变量构建 ServerConfig 再连接。
-    pub async fn from_env() -> Result<Self>;
-
-    pub fn pool(&self) -> &sqlx::MySqlPool;
-    pub fn tenant(&self) -> &str;
+impl Client {
+    pub fn builder() -> ClientBuilder;
     pub fn database(&self) -> &str;
-
-    /// 执行不返回行的 SQL。
-    pub async fn execute(&self, sql: &str) -> Result<sqlx::mysql::MySqlQueryResult>;
-
-    /// 执行查询并返回所有行。
-    pub async fn fetch_all(&self, sql: &str) -> Result<Vec<sqlx::mysql::MySqlRow>>;
-}
-```
-
-### 5.2 Collection
-
-设计与实现（略去内部细节）：
-
-```rust
-impl ServerClient {
-    pub async fn create_collection<Ef: EmbeddingFunction + 'static>(
-        &self,
-        name: &str,
-        config: Option<HnswConfig>,
-        embedding_function: Option<Ef>,
-    ) -> Result<Collection<Ef>>;
-
-    pub async fn get_collection<Ef: EmbeddingFunction + 'static>(
-        &self,
-        name: &str,
-        embedding_function: Option<Ef>,
-    ) -> Result<Collection<Ef>>;
-
+    pub async fn execute(&self, sql: &str) -> Result<()>;
+    pub async fn fetch_all(&self, sql: &str) -> Result<Vec<Box<dyn BackendRow>>>;
+    pub async fn create_collection<Ef>(&self, name: &str, config: Option<HnswConfig>, embedding_function: Option<Ef>) -> Result<Collection<Ef>>;
+    pub async fn get_collection<Ef>(&self, name: &str, embedding_function: Option<Ef>) -> Result<Collection<Ef>>;
     pub async fn delete_collection(&self, name: &str) -> Result<()>;
     pub async fn list_collections(&self) -> Result<Vec<String>>;
     pub async fn has_collection(&self, name: &str) -> Result<bool>;
-
-    /// 存在则 get，不存在则 create。
-    pub async fn get_or_create_collection<Ef: EmbeddingFunction + 'static>(
-        &self,
-        name: &str,
-        config: Option<HnswConfig>,
-        embedding_function: Option<Ef>,
-    ) -> Result<Collection<Ef>>;
-
-    /// 统计当前 database 下的 collection 数量。
+    pub async fn get_or_create_collection<Ef>(&self, name: &str, config: Option<HnswConfig>, embedding_function: Option<Ef>) -> Result<Collection<Ef>>;
     pub async fn count_collection(&self) -> Result<usize>;
+}
+
+impl ClientBuilder {
+    pub fn new() -> Self;
+    #[cfg(feature = "embedded")]
+    pub fn path(self, path: impl Into<String>) -> Self;
+    #[cfg(feature = "server")]
+    pub fn host(self, host: impl Into<String>) -> Self;
+    pub fn database(self, database: impl Into<String>) -> Self;
+    #[cfg(feature = "embedded")]
+    pub fn from_embedded_config(config: EmbeddedConfig) -> Self;
+    #[cfg(feature = "server")]
+    pub fn from_server_config(config: ServerConfig) -> Self;
+    pub async fn build(self) -> Result<Client>;
 }
 ```
 
-约束与行为：
+行为约定：若设置 `path` 则 `build()` 得到 `Client::Embedded`；若设置 `host` 则得到 `Client::Server`。未设置时默认嵌入式、路径 **`seekdb.db`**。仅 server feature 时必须设置 `host`，否则返回 `SeekDbError::Config`。
 
-- 表名通过 `meta::CollectionNames::table_name(name)` 统一映射为 `c$v1${name}`，与 Python SDK 对齐。
-- `create_collection` 要求 `config: Option<HnswConfig>` 不能为空，否则返回 `SeekDbError::Config`。
-- `get_collection` 通过 `DESCRIBE` / `SHOW CREATE TABLE` 解析 `embedding` 列的维度和 `distance=` 配置。
+### 5.2 ServerClient 与 EmbeddedClient（直接使用）
 
-### 5.3 AdminApi 与 AdminClient（admin.rs / server.rs）
+需要时仍可直接使用具体类型：**ServerClient** 提供 `connect` / `from_config` / `from_env`、`pool` / `tenant` / `database`、`execute` / `fetch_all` 及 Collection 管理方法；**EmbeddedClient** 通过 `EmbeddedClient::builder()` 配置 `db_dir`（默认 `seekdb.db`）、`database`、`autocommit` 等，同样提供 Collection 管理方法。两者均实现 `SeekDbClient` 与 `CollectionBackend`。
 
-Python 有独立的 `AdminClient`，Rust 设计中：
+### 5.3 Collection 管理（由 Client 委托）
 
-- 定义一个 `AdminApi` trait 抽象数据库管理能力；
-- `ServerClient` 实现 `AdminApi`；
-- `AdminClient` 是基于 `Arc<ServerClient>` 的封装，便于在不同上下文中共享。
+`Client` 上的 `create_collection` / `get_collection` / `delete_collection` / `list_collections` / `has_collection` / `get_or_create_collection` / `count_collection` 委托给底层 `ServerClient` 或 `EmbeddedClient`。表名通过 `meta::CollectionNames::table_name(name)` 统一映射为 `c$v1${name}`；`create_collection` 要求 `config` 非空（否则 `SeekDbError::Config`）；`get_collection` 从表结构解析维度与距离配置。
 
-接口设计与实现一致：
+### 5.4 AdminApi 与 AdminClient（admin.rs）
+
+- `AdminApi` trait 定义数据库管理能力；`ServerClient` 与 `EmbeddedClient` 均实现该 trait。
+- **AdminClient** 为统一枚举：`AdminClient::Server(ServerClient)` 或 `AdminClient::Embedded(EmbeddedClient)`。
+- 推荐通过 **`AdminClient::builder()`** 构建：`.path(...)` 为嵌入式、`.host(...).port(...)` 为 Server；未配置时默认嵌入式、路径 `seekdb.db`。
+- **Bootstrap 库**：Admin 连接固定使用 **`information_schema`**（常量 `ADMIN_BOOTSTRAP_DATABASE`），不传空库名，与 pyseekdb 一致。
 
 ```rust
-#[async_trait::async_trait]
-pub trait AdminApi {
-    async fn create_database(&self, name: &str, tenant: Option<&str>) -> Result<()>;
-    async fn get_database(&self, name: &str, tenant: Option<&str>) -> Result<Database>;
-    async fn delete_database(&self, name: &str, tenant: Option<&str>) -> Result<()>;
-    async fn list_databases(
-        &self,
-        limit: Option<u32>,
-        offset: Option<u32>,
-        tenant: Option<&str>,
-    ) -> Result<Vec<Database>>;
-}
+pub const ADMIN_BOOTSTRAP_DATABASE: &str = "information_schema";
 
 #[derive(Clone)]
-pub struct AdminClient {
-    inner: std::sync::Arc<ServerClient>,
+pub enum AdminClient {
+    #[cfg(feature = "server")]
+    Server(ServerClient),
+    #[cfg(feature = "embedded")]
+    Embedded(EmbeddedClient),
 }
 
 impl AdminClient {
-    pub fn new(inner: std::sync::Arc<ServerClient>) -> Self;
+    pub fn builder() -> AdminClientBuilder;
+    #[cfg(feature = "server")]
+    pub fn from_server(client: ServerClient) -> Self;
+    #[cfg(feature = "embedded")]
+    pub fn from_embedded(client: EmbeddedClient) -> Self;
 }
+
+#[async_trait]
+impl AdminApi for AdminClient { /* create_database / get_database / delete_database / list_databases */ }
 ```
 
-说明：
-
-- `ServerClient` 也实现了 `AdminApi`，调用者既可以直接在 `ServerClient` 上调用 admin 方法，也可以通过 `AdminClient`。
-- `list_databases` 返回 `Database` 结构，而不是单纯的字符串名称，保留 charset / collation 信息。
+- `list_databases` 返回 `Vec<Database>`，保留 name / tenant / charset / collation 等信息。
 
 ---
 
@@ -315,7 +294,7 @@ impl AdminClient {
 ```rust
 #[derive(Clone)]
 pub struct Collection<Ef = Box<dyn EmbeddingFunction>> {
-    client: std::sync::Arc<ServerClient>,
+    client: std::sync::Arc<dyn CollectionBackend>,
     name: String,
     id: Option<String>,
     dimension: u32,
@@ -326,7 +305,7 @@ pub struct Collection<Ef = Box<dyn EmbeddingFunction>> {
 
 impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
     pub fn new(
-        client: std::sync::Arc<ServerClient>,
+        client: std::sync::Arc<dyn CollectionBackend>,
         name: String,
         id: Option<String>,
         dimension: u32,
@@ -345,7 +324,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
 
 说明：
 
-- `client` 为共享的 `Arc<ServerClient>`，保证多个 Collection/Component 可复用同一连接。
+- `client` 为共享的 `Arc<dyn CollectionBackend>`，`ServerClient` 与 `EmbeddedClient` 均实现 `CollectionBackend`，保证 Collection 可同时用于 Server 与嵌入式模式。
 - `id` / `metadata` 目前主要为保持与 Python 模型对齐，表名仍由 `c$v1$` 前缀控制。
 
 ### 6.2 DML 接口
@@ -684,55 +663,55 @@ pub fn build_where_clause(
 
 1. **公共类型骨架**
    - `error.rs` + `config.rs` + `types.rs`；
-   - 当前实现：已完成（含 `Database`、`DistanceMetric::as_str` 等）。
+   - 当前实现：已完成（含 `Database`、`EmbeddedConfig`、`DistanceMetric::as_str` 等）。
 
-2. **基础连接层**
-   - `ServerClient::builder/from_config/from_env/execute/fetch_all`；
-   - 当前实现：已完成，基于 `sqlx::mysql::MySqlPool`。
+2. **统一 Client 与后端抽象**
+   - `Client` 枚举与 `ClientBuilder`（path => 嵌入式，host/port => Server，默认 `seekdb.db`）；
+   - `CollectionBackend` trait，`ServerClient` 与 `EmbeddedClient` 均实现，供 `Collection` 使用；
+   - 当前实现：已完成，`client.rs`、`client_trait.rs`、`backend.rs` 与 `embedded.rs` 配合。
 
-3. **Collection 管理与元数据**
-   - `ServerClient` 上的 collection 管理方法；
-   - `Collection` 结构体及其基本属性（name / id / dimension / distance / metadata）；
+3. **基础连接层**
+   - `ServerClient`：`connect` / `from_config` / `from_env`、`execute` / `fetch_all`；
+   - `EmbeddedClient`：`EmbeddedClientBuilder`、`db_dir`（默认 `seekdb.db`）等；
+   - 当前实现：已完成，Server 基于 `sqlx::mysql::MySqlPool`，Embedded 基于 SeekDB C 库。
+
+4. **Collection 管理与元数据**
+   - `Client` 及 `ServerClient` / `EmbeddedClient` 上的 collection 管理方法；
+   - `Collection<Ef>` 持有 `Arc<dyn CollectionBackend>`，基本属性（name / id / dimension / distance / metadata）；
    - 当前实现：已完成，包含从表结构反推维度与距离的逻辑。
 
-4. **Filter / DocFilter 与 WHERE 构造**
+5. **Filter / DocFilter 与 WHERE 构造**
    - `Filter` / `DocFilter` 枚举与 `build_where_clause`；
    - 当前实现：已完成，并配套单元测试。
 
-5. **Collection DML**
+6. **Collection DML**
    - `add/update/upsert/delete` 行为与错误语义；
    - 当前实现：已实现并通过集成测试覆盖多种场景（自动 embedding、metadata-only upsert、防御性 delete 等）。
 
-6. **EmbeddingFunction 与 DefaultEmbedding**
+7. **EmbeddingFunction 与 DefaultEmbedding**
    - trait 抽象 + 默认 ONNX 实现；
    - 当前实现：在启用 `embedding` feature 时可用，并有基础单元测试做形状校验。
 
-7. **Collection DQL 与 Hybrid**
+8. **Collection DQL 与 Hybrid**
    - `query_embeddings/query_texts/get/peek/count`；
    - `hybrid_search/hybrid_search_advanced` + Typed Hybrid 配置；
    - 当前实现：已完成，包含对 `DBMS_HYBRID_SEARCH` 的调用与 fallback 逻辑，配套集成测试。
 
-8. **Admin 接口与数据库管理**
-   - `AdminApi` trait、`AdminClient` 封装与 `ServerClient` 实现；
+9. **Admin 接口与数据库管理**
+   - `AdminApi` trait、统一 `AdminClient` 枚举（Server / Embedded）、`AdminClientBuilder`；
+   - Admin 连接固定使用 `information_schema`；
    - 当前实现：已完成，并在集成测试中覆盖 CRUD 流程。
 
-9. **示例与测试**
-   - README 示例与 `tests/` 下的集成测试；
-   - 当前实现：已存在多组集成测试对照 README 验证行为。
+10. **示例与测试**
+    - README 示例与 `tests/` 下的集成测试（Server 与 Embedded 均使用统一 Client/AdminClient 入口）；
+    - 当前实现：已存在多组集成测试对照 README 验证行为。
 
 ---
 
 ## 10. 后续演进方向（概要）
 
-- **Embedded 模式**：
-  - 可能需要独立的 Backend 实现（实现 `SqlBackend` / `BackendRow`），避免依赖 MySQL 协议；
-  - 若复用 Python 实现，可考虑通过 PyO3 嵌入 Python，但需要额外关注：
-    - GIL 管理与 async 互操作；
-    - 构建体积与分发；
-    - 多平台兼容性。
+- **Embedded 模式**：已实现。通过 `EmbeddedClient` 与 SeekDB C 库直连，实现 `CollectionBackend`，与 `ServerClient` 共用同一套 `Collection` / Admin API。统一入口为 `Client::builder().path(...).build().await` 与 `AdminClient::builder().path(...).build().await`，默认路径 `seekdb.db`。
 
-- **Backend 抽象进一步提升**：
-  - 将 `Collection` 从具体的 `ServerClient` 抽象为泛型 backend（如 `Collection<B, Ef>` where `B: SqlBackend`）；
-  - 使同一高层 API 可在不同引擎/模式之间复用。
+- **Backend 抽象**：已采用 `CollectionBackend` trait 与 `Arc<dyn CollectionBackend>`，`Collection` 可同时对接 Server 与 Embedded；若需扩展新引擎，只需实现 `CollectionBackend` 并接入 `Client` / `AdminClient` 枚举即可。
 
-当前接口设计与实现总体一致，可作为后续演进和对外文档的基准。未来扩展新 backend 或 embedding 实现时，优先保持上述 trait 与结果类型的稳定性。 
+当前接口设计与实现总体一致，可作为后续演进和对外文档的基准。未来扩展新 backend 或 embedding 实现时，优先保持上述 trait 与结果类型的稳定性。

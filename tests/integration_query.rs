@@ -2,26 +2,26 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    AddBatch, DistanceMetric, DocFilter, Filter, GetQuery, HnswConfig, IncludeField, SeekDbError,
-    ServerClient,
+    AddBatch, AdminApi, DistanceMetric, DocFilter, Filter, GetQuery, HnswConfig, IncludeField,
+    SeekDbError,
 };
 use serde_json::json;
 
 mod common;
-use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 #[tokio::test]
 async fn collection_query_and_filters() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_query_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("q_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -128,13 +128,13 @@ async fn collection_query_texts_with_embedding_function() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_qtexts_ok_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("qtexts_ok_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -174,13 +174,13 @@ async fn collection_query_texts_not_implemented() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_qtexts_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("qtexts_coll_{}", ts_suffix());
     let hnsw = HnswConfig {

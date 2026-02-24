@@ -1,10 +1,8 @@
 use seekdb_rs::{
-    AdminApi, AdminClient, DistanceMetric, Embedding, EmbeddingFunction, HnswConfig, Metadata,
-    SeekDbError, ServerClient,
+    AdminApi, DistanceMetric, Embedding, EmbeddingFunction, HnswConfig, Metadata, SeekDbError,
 };
-use std::sync::Arc;
 mod common;
-use common::load_config_for_integration;
+use common::{client_from_config, load_config_for_integration};
 use serde_json::json;
 
 #[tokio::test]
@@ -12,24 +10,20 @@ async fn test_readme_doc() -> Result<(), SeekDbError> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let client = ServerClient::from_config(config).await?;
-    // 创建 admin client
-    let admin = AdminClient::new(Arc::new(client.clone()));
+    let client = client_from_config(config).await?;
 
-    admin.create_database("my_test_readme", Some("sys")).await?;
+    client.create_database("my_test_readme", Some("sys")).await?;
 
-    let db = admin.get_database("my_test_readme", Some("sys")).await?;
+    let db = client.get_database("my_test_readme", Some("sys")).await?;
     println!("Database {:?} created successfully", db);
 
-    let list = admin.list_databases(None, None, None).await?;
-    // println!("Database list: {:?}", list);
+    let _list = client.list_databases(None, None, None).await?;
 
-    admin.delete_database("my_test_readme", None).await?;
+    client.delete_database("my_test_readme", None).await?;
 
-    let list = admin.list_databases(None, None, None).await?;
-    // println!("Database list: {:?}", list);
+    let _list = client.list_databases(None, None, None).await?;
 
-    // 试试 server client
+    // Try server client (collection operations)
     let hnsw = HnswConfig {
         dimension: 3,
         distance: DistanceMetric::Cosine,

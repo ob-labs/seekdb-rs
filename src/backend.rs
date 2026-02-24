@@ -1,4 +1,57 @@
+use async_trait::async_trait;
+
 use crate::error::Result;
+
+/// Parameter for parameterized SQL (used by Collection with both server and embedded backends).
+#[derive(Clone, Debug)]
+pub enum QueryParam {
+    String(String),
+    Bytes(Vec<u8>),
+    I64(i64),
+    F32(f32),
+    Null,
+}
+
+impl QueryParam {
+    /// Build a query param from a metadata filter value (for WHERE clauses).
+    pub fn from_metadata_value(v: &serde_json::Value) -> Self {
+        use serde_json::Value as JsonValue;
+        match v {
+            JsonValue::String(s) => QueryParam::String(s.clone()),
+            JsonValue::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    QueryParam::I64(i)
+                } else if let Some(u) = n.as_u64() {
+                    QueryParam::I64(u as i64)
+                } else if let Some(f) = n.as_f64() {
+                    QueryParam::F32(f as f32)
+                } else {
+                    QueryParam::String(n.to_string())
+                }
+            }
+            JsonValue::Bool(b) => QueryParam::String(if *b { "1" } else { "0" }.to_string()),
+            JsonValue::Null => QueryParam::Null,
+            other => QueryParam::String(other.to_string()),
+        }
+    }
+}
+
+/// Backend used by Collection for SQL execution. Abstracts over server (sqlx pool)
+/// and embedded (C API) so Collection can work with both.
+#[async_trait]
+pub trait CollectionBackend: Send + Sync {
+    /// Execute a SQL statement that does not return rows.
+    async fn execute(&self, sql: &str) -> Result<()>;
+
+    /// Fetch all rows for the given SQL query (no parameters).
+    async fn fetch_all(&self, sql: &str) -> Result<Vec<Box<dyn BackendRow>>>;
+
+    /// Execute a SQL statement with ? placeholders; params are bound in order.
+    async fn execute_with_params(&self, sql: &str, params: &[QueryParam]) -> Result<()>;
+
+    /// Fetch all rows for the given SQL with ? placeholders.
+    async fn fetch_all_with_params(&self, sql: &str, params: &[QueryParam]) -> Result<Vec<Box<dyn BackendRow>>>;
+}
 
 /// Minimal row abstraction used by higher-level collection/admin logic.
 ///

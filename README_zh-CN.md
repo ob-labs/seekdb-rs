@@ -1,6 +1,6 @@
-# seekdb-rs – Rust SDK for SeekDB (Server Mode)
+# seekdb-rs – Rust SDK for SeekDB
 
-`seekdb-rs` 是 SeekDB 的 Rust 版 SDK，当前只覆盖 **Server 模式**，通过 MySQL 协议访问 seekdb / OceanBase。整体接口与行为设计尽量对齐 Python 版 `pyseekdb`，但目前仍处于 **实验性 / 不完整** 状态。
+`seekdb-rs` 是 SeekDB 的 Rust 版 SDK，提供与 pyseekdb 对齐的 **统一 `Client`**：用 **path** 表示嵌入式模式，用 **host/port** 表示 Server 模式。Server 模式通过 MySQL 协议访问 SeekDB / OceanBase。整体接口与行为设计尽量对齐 Python 版 `pyseekdb`，但目前仍处于 **实验性 / 不完整** 状态。
 
 > ⚠️ 重要说明：本 README 尽量完全对标 Python 版 README 的结构和细节，并在每个相关位置明确标出「✅ 已实现」或「❌ 未实现」的能力差异。
 
@@ -45,6 +45,7 @@ cargo build
 ```
 
 - 默认启用 `server` feature（Server 模式客户端）。
+- 可选启用 `embedded` feature（嵌入模式客户端 + 默认向量模型）；启用后从 OceanBase S3 下载 libseekdb 并缓存在 `target/libseekdb`。
 - 可选启用 `embedding` feature，集成基于 ONNX 的默认文本向量模型 `DefaultEmbedding`（依赖 `reqwest` / `tokenizers` / `ort`）。
 - 可选启用 `sync` feature，提供基于内部 Tokio runtime 的阻塞版客户端 `SyncServerClient` / `SyncCollection`，方便纯同步项目直接使用。
 
@@ -53,12 +54,51 @@ cargo build
 ## 1. Client Connection
 
 Python 版通过统一的 `pyseekdb.Client(...)` 封装多种模式（embedded / remote server）。  
-在 Rust 版中，目前仅实现了 **Server 模式客户端**：`ServerClient`。
+在 Rust 版中，**`Client` 为统一入口**（与 pyseekdb 对齐）：用 **path** 表示嵌入式模式，用 **host/port** 表示 Server 模式。需要时也可直接使用 `ServerClient` / `EmbeddedClient` 的专用 API。
 
-> ✅ 对标 Python 的 `RemoteServerClient`  
-> ❌ 对标 Python 的 Embedded 客户端尚未实现
+### 1.0 统一 `Client`（推荐）
 
-### 1.1 Server Client（Remote SeekDB / OceanBase）
+使用 `Client::builder()`，再通过 **`.path(...)`** 表示嵌入式，或 **`.host(...).port(...)`** 表示 Server。不填 path 也不填 host 时，默认为嵌入式，路径为 `./seekdb.db`。
+
+**嵌入式（path）：**
+
+```rust
+use seekdb_rs::{Client, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    let client = Client::builder()
+        .path("./seekdb.db")   // 嵌入式：数据库路径
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+**Server（host + port）：**
+
+```rust
+use seekdb_rs::{Client, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    let client = Client::builder()
+        .host("127.0.0.1")
+        .port(2881)
+        .tenant("sys")
+        .database("test")
+        .user("root")
+        .password("")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+### 1.1 Server Client（直接使用 `ServerClient`）
 
 ```rust
 use seekdb_rs::{ServerClient, SeekDbError};
@@ -70,7 +110,7 @@ async fn main() -> Result<(), SeekDbError> {
         .host("127.0.0.1") // host
         .port(2881)        // port
         .tenant("sys")     // tenant
-        .database("demo")  // database
+        .database("test")  // database
         .user("root")      // user（不含 tenant 后缀）
         .password("")      // password
         .max_connections(5)
@@ -137,29 +177,53 @@ async fn main() -> Result<(), SeekDbError> {
 }
 ```
 
-### 1.3 Client Methods and Properties
+### 1.3 Embedded 模式客户端
 
-Rust 版中没有 Python 的统一 `Client` 工厂类，直接使用 `ServerClient`。  
-主要方法（异步 API）：
+嵌入式模式推荐使用统一入口：`Client::builder().path("./seekdb.db").database("test").build().await?`。  
+需要嵌入式专用选项（例如 `from_env()`）时，可直接使用 `EmbeddedClient`：
 
-| Method / Property                            | Status | Description                                                                 |
-|----------------------------------------------|--------|-----------------------------------------------------------------------------|
-| `ServerClient::builder()`                    | ✅     | 通过 builder 链式配置并创建远程客户端                                       |
-| `ServerClient::from_config(ServerConfig)`    | ✅     | 从配置连接                                                                  |
-| `ServerClient::from_env()`                   | ✅     | 从环境变量构建配置并连接                                                    |
-| `ServerClient::pool()`                       | ✅     | 获取底层 `MySqlPool`                                                        |
-| `ServerClient::tenant()` / `database()`      | ✅     | 获取当前 tenant / database                                                  |
-| `ServerClient::execute(sql)`                 | ✅     | 执行不返回行的 SQL（`INSERT`/`UPDATE` 等）                                  |
-| `ServerClient::fetch_all(sql)`               | ✅     | 执行查询并返回所有行                                                        |
-| `ServerClient::create_collection(...)`       | ✅     | 创建 Collection（见后文）                                                   |
-| `ServerClient::get_collection(...)`          | ✅     | 获取 Collection 对象                                                        |
-| `ServerClient::get_or_create_collection(...)`| ✅     | 获取或创建 Collection                                                       |
-| `ServerClient::delete_collection(name)`      | ✅     | 删除 Collection                                                             |
-| `ServerClient::list_collections()`           | ✅     | 列出当前数据库中所有 Collection 名称                                        |
-| `ServerClient::has_collection(name)`         | ✅     | 检查 Collection 是否存在                                                    |
-| `ServerClient::count_collection()`           | ✅     | 统计当前数据库中 Collection 数量                                            |
+```rust
+use seekdb_rs::{Client, EmbeddedClient, EmbeddedConfig, SeekDbError};
 
-> ❌ Embedded 模式（对应 Python 的 `Client(path=...)`）暂未在 Rust 中实现。
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    // 推荐：统一 Client + path
+    let client = Client::builder()
+        .path("./seekdb.db")
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+
+    // 或直接使用 EmbeddedClient（例如 from_env()）
+    let client = EmbeddedClient::builder()
+        .db_dir("./seekdb.db")
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+统一 `Client` 与 `ServerClient` / `EmbeddedClient` 均支持：`execute`、`fetch_all`、`create_collection`、`get_collection`、`get_or_create_collection`、`delete_collection`、`list_collections`、`has_collection`、`count_collection` 等；`Client` 还实现 `AdminApi`（`create_database` / `get_database` / `delete_database` / `list_databases`）。
+
+#### 1.3.1 嵌入式模式的环境变量
+
+嵌入式模式也可从环境变量读取配置（命名与 Server 模式一致）：
+
+- `EMBEDDED_DB_DIR`（必填）- 数据库路径，默认可与 `./seekdb.db` 对齐
+- `EMBEDDED_DATABASE`（必填）- 数据库名（与 `SERVER_DATABASE` 命名一致）
+- `EMBEDDED_PORT`（可选）- 端口（与 `SERVER_PORT` 命名一致，嵌入式默认 None）
+- `EMBEDDED_AUTOCOMMIT`（可选，默认 `false`）- 是否自动提交
+
+```bash
+export EMBEDDED_DB_DIR=./seekdb.db
+export EMBEDDED_DATABASE=demo
+export EMBEDDED_AUTOCOMMIT=false
+```
+
+使用 `EmbeddedClient::builder().from_env()?` 或 `EmbeddedClient::from_config(EmbeddedConfig::from_env()?)` 即可从环境变量创建嵌入式客户端。
 
 ### 1.4 同步客户端（`SyncServerClient` / `SyncCollection`，需 `sync` feature）
 
@@ -1106,6 +1170,18 @@ SEEKDB_INTEGRATION=1 SERVER_HOST=127.0.0.1 SERVER_PORT=2881 SERVER_TENANT=sys SE
 - README 示例片段（`tests/readme_test.rs`）
 - 同步客户端包装（`tests/integration_sync.rs`，需 `sync` feature）
 
+**嵌入式集成测试**（`embedded` feature，`harness = false`）：使用目录 `tests/seekdb.db`，运行 6 个 embedded 测试二进制，例如：
+
+```bash
+cargo test --no-default-features --features embedded \
+  --test embedded_integration_client \
+  --test embedded_integration_collection_dml \
+  --test embedded_integration_query \
+  --test embedded_integration_hybrid \
+  --test embedded_integration_embedding \
+  --test embedded_readme_test
+```
+
 ---
 
 ## Feature Matrix
@@ -1129,7 +1205,7 @@ SEEKDB_INTEGRATION=1 SERVER_HOST=127.0.0.1 SERVER_PORT=2881 SERVER_TENANT=sys SE
 | 文本查询：`Collection::query_texts`              | ✅ 已实现 | 基于 `embedding_function` 自动生成查询向量并复用 `query_embeddings` |
 | 同步包装：`SyncServerClient` / `SyncCollection`  | ✅ 已实现 | 在 `sync` feature 下提供阻塞版客户端，内部基于 Tokio runtime |
 | Hybrid Search：`Collection::hybrid_search`       | ✅ 已实现 | 支持文本向量查询 + metadata/doc 过滤；复杂 search_params 需手动构造 |
-| Embedded Client（嵌入式模式）                    | ❌ 未实现 | Rust 目前仅支持 Server 模式 |
+| Embedded Client（嵌入式模式）                    | ✅ 已实现 | 通过 `Client::builder().path(...)` 或 `EmbeddedClient`，与 pyseekdb 对齐 |
 | RAG Demo（Rust 端到端示例）                      | ❌ 未实现 | 目前仅有 Python demo |
 
 如果你在使用过程中发现某个与 Python 版行为不一致的地方，欢迎直接对照 `src/pyseekdb` 的实现细节，一起完善 Rust SDK。 

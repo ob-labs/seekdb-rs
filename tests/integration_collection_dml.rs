@@ -2,13 +2,13 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    AddBatch, DeleteQuery, DistanceMetric, Filter, GetQuery, HnswConfig, IncludeField,
-    SeekDbError, ServerClient, UpdateBatch, UpsertBatch,
+    AddBatch, AdminApi, DeleteQuery, DistanceMetric, Filter, GetQuery, HnswConfig, IncludeField,
+    SeekDbError, UpdateBatch, UpsertBatch,
 };
 use serde_json::json;
 
 mod common;
-use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Creating a collection without HnswConfig should return a config error.
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn collection_create_without_hnsw_config_errors() -> Result<()> {
         return Ok(());
     };
 
-    let client = ServerClient::from_config(config).await?;
+    let client = client_from_config(config.clone()).await?;
     let name = format!("no_cfg_coll_{}", ts_suffix());
 
     let res = client
@@ -44,13 +44,13 @@ async fn collection_add_invalid_embedding_dimension_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_invalid_dim_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("invalid_dim_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -89,13 +89,13 @@ async fn collection_add_with_auto_embedding() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_auto_emb_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("auto_emb_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -142,13 +142,13 @@ async fn collection_add_length_mismatch_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_len_mismatch_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("len_mismatch_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -188,14 +188,14 @@ async fn collection_dml_roundtrip() -> Result<()> {
         return Ok(());
     };
     // Create a dedicated database for the test
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_dml_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     // Use the new database
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -269,13 +269,13 @@ async fn collection_quickstart_like_flow() -> Result<()> {
         return Ok(());
     };
 
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_quickstart_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("quickstart_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -330,13 +330,13 @@ async fn collection_upsert_metadata_and_partial_fields() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_upsert_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("upsert_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -413,13 +413,13 @@ async fn collection_delete_without_any_condition_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_delete_guard_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("delete_guard_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -459,13 +459,13 @@ async fn collection_list_and_has() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_list_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let hnsw = HnswConfig {
         dimension: 3,
