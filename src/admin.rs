@@ -85,8 +85,6 @@ pub struct AdminClientBuilder {
     autocommit: bool,
     #[cfg(feature = "embedded")]
     port_embedded: Option<i32>,
-    #[cfg(feature = "embedded")]
-    skip_open: bool,
     #[cfg(feature = "server")]
     max_connections: u32,
 }
@@ -110,8 +108,6 @@ impl AdminClientBuilder {
             autocommit: false,
             #[cfg(feature = "embedded")]
             port_embedded: None,
-            #[cfg(feature = "embedded")]
-            skip_open: false,
             #[cfg(feature = "server")]
             max_connections: 5,
         }
@@ -153,12 +149,6 @@ impl AdminClientBuilder {
         self
     }
 
-    #[cfg(feature = "embedded")]
-    pub fn skip_open(mut self, skip_open: bool) -> Self {
-        self.skip_open = skip_open;
-        self
-    }
-
     #[cfg(all(feature = "server", feature = "embedded"))]
     pub async fn build(self) -> Result<AdminClient> {
         if let Some(path) = self.path {
@@ -167,7 +157,6 @@ impl AdminClientBuilder {
                 .database(ADMIN_BOOTSTRAP_DATABASE) // same as server: information_schema for admin ops
                 .autocommit(self.autocommit)
                 .port(self.port_embedded)
-                .skip_open(self.skip_open)
                 .build()
                 .await?;
             Ok(AdminClient::Embedded(client))
@@ -190,7 +179,6 @@ impl AdminClientBuilder {
                 .database(ADMIN_BOOTSTRAP_DATABASE)
                 .autocommit(self.autocommit)
                 .port(self.port_embedded)
-                .skip_open(self.skip_open)
                 .build()
                 .await?;
             Ok(AdminClient::Embedded(client))
@@ -226,7 +214,6 @@ impl AdminClientBuilder {
             .database(ADMIN_BOOTSTRAP_DATABASE)
             .autocommit(self.autocommit)
             .port(self.port_embedded)
-            .skip_open(self.skip_open)
             .build()
             .await?;
         Ok(AdminClient::Embedded(client))

@@ -39,7 +39,19 @@ bindgen = { version = "0.71", default-features = false, features = ["runtime"] }
 build-reqwest = { package = "reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 zip = { version = "1", default-features = false, features = ["deflate"], optional = true }
 
-# Server integration tests: tests/*.rs (integration_*.rs, readme_test.rs) are auto-discovered.
+# Examples (run with e.g. cargo run --example simple_example --no-default-features --features embedded,embedding)
+[[example]]
+name = "simple_example"
+required-features = ["embedded", "embedding"]
+[[example]]
+name = "complete_example"
+required-features = ["embedded"]
+[[example]]
+name = "hybrid_search_example"
+required-features = ["embedded", "embedding"]
+
+[dev-dependencies]
+# Server integration tests: tests/integration_*.rs are auto-discovered.
 # Embedded integration tests: harness = false so main() uses current-thread runtime and block_on.
 [[test]]
 name = "embedded_integration_client"
@@ -52,9 +64,6 @@ name = "embedded_integration_hybrid"
 harness = false
 [[test]]
 name = "embedded_integration_query"
-harness = false
-[[test]]
-name = "embedded_readme_test"
 harness = false
 [[test]]
 name = "embedded_integration_embedding"

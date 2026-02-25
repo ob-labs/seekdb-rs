@@ -8,6 +8,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::Path;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::admin::AdminApi;
@@ -29,7 +30,6 @@ pub struct EmbeddedClientBuilder {
     database: String,
     autocommit: bool,
     port: Option<i32>,
-    skip_open: bool,
 }
 
 /// Embedded client that uses the native SeekDB C library.
@@ -37,6 +37,22 @@ pub struct EmbeddedClientBuilder {
 pub struct EmbeddedClient {
     handle: Arc<EmbeddedHandle>,
     database: String,
+}
+
+/// Number of active embedded connections; when the last is dropped we call seekdb_close().
+static EMBEDDED_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// Ensures seekdb_close() is only called once (shared by Drop and EmbeddedDatabase::close()).
+static SEEKDB_CLOSED: AtomicBool = AtomicBool::new(false);
+
+/// Calls seekdb_close() at most once; idempotent and safe with explicit EmbeddedDatabase::close().
+///
+/// Note: After close, connect() returns -5 unless open() is called again. The C library (seekdb)
+/// supports open-after-close; call EmbeddedDatabase::open(&path) before the next build() to reconnect.
+fn close_embedded_once() {
+    if SEEKDB_CLOSED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    unsafe { seekdb_close() };
 }
 
 // Internal handle wrapper that manages the C connection
@@ -51,6 +67,9 @@ impl Drop for EmbeddedHandle {
     fn drop(&mut self) {
         unsafe {
             seekdb_connect_close(self.handle);
+        }
+        if EMBEDDED_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
+            close_embedded_once();
         }
     }
 }
@@ -150,20 +169,16 @@ impl BackendRow for EmbeddedRow {
 
 impl EmbeddedClient {
     /// Build a client from an `EmbeddedConfig`.
-    /// Runs seekdb_open on a blocking thread, then connect.
+    /// Opens the database on the current thread (see `EmbeddedClientBuilder::build`), then connect.
     /// If the database does not exist (C ABI returns "database is null"), creates it via AdminApi then reconnects (aligned with pyseekdb).
     pub async fn from_config(config: EmbeddedConfig) -> Result<Self> {
         let db_dir = config.db_dir.clone();
         let port = config.port;
-        tokio::task::spawn_blocking(move || {
-            if let Some(p) = port {
-                EmbeddedDatabase::open_with_service(&db_dir, p)
-            } else {
-                EmbeddedDatabase::open(&db_dir)
-            }
-        })
-        .await
-        .map_err(|e| SeekDbError::Connection(format!("spawn_blocking open failed: {e}")))??;
+        if let Some(p) = port {
+            EmbeddedDatabase::open_with_service(&db_dir, p)?;
+        } else {
+            EmbeddedDatabase::open(&db_dir)?;
+        }
         Self::connect_or_create_then_connect(
             &config.db_dir,
             &config.database,
@@ -541,7 +556,7 @@ impl EmbeddedClient {
         autocommit: bool,
         port: Option<i32>,
     ) -> Result<Self> {
-        // Caller must have opened via EmbeddedDatabase::open (in from_config/build we use spawn_blocking).
+        // Caller must have opened via EmbeddedDatabase::open (from_config/build call open on the current thread).
         let _ = (db_dir, port);
         let db_name_cstr = CString::new(database)?;
         let mut handle: SeekdbHandle = ptr::null_mut();
@@ -563,6 +578,8 @@ impl EmbeddedClient {
         if handle.is_null() {
             return Err(SeekDbError::Connection("seekdb_connect returned null handle".into()));
         }
+
+        EMBEDDED_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
 
         Ok(Self {
             handle: Arc::new(EmbeddedHandle { handle }),
@@ -845,15 +862,7 @@ impl EmbeddedClientBuilder {
             database: "test".to_string(),
             autocommit: false,
             port: None,
-            skip_open: false,
         }
-    }
-
-    /// When true, build() only connects and does not call `EmbeddedDatabase::open`.
-    /// Use when the database was already opened (e.g. by `run_embedded_tests` on the main thread).
-    pub fn skip_open(mut self, skip: bool) -> Self {
-        self.skip_open = skip;
-        self
     }
 
     pub fn db_dir(mut self, db_dir: impl Into<String>) -> Self {
@@ -893,18 +902,16 @@ impl EmbeddedClientBuilder {
         if self.database.trim().is_empty() {
             return Err(SeekDbError::Config("database must be non-empty".into()));
         }
-        if !self.skip_open {
-            let db_dir = self.db_dir.clone();
-            let port = self.port;
-            tokio::task::spawn_blocking(move || {
-                if let Some(port) = port {
-                    EmbeddedDatabase::open_with_service(&db_dir, port)
-                } else {
-                    EmbeddedDatabase::open(&db_dir)
-                }
-            })
-            .await
-            .map_err(|e| SeekDbError::Connection(format!("spawn_blocking open failed: {e}")))??;
+        // Open on the current thread (no spawn_blocking). The C library's open can hang when
+        // run on a worker thread; running on the thread that drives the future (e.g. main thread
+        // with current_thread runtime) avoids that. If already opened with same path, seekdb_open
+        // returns immediately.
+        let db_dir = self.db_dir.clone();
+        let port = self.port;
+        if let Some(port) = port {
+            EmbeddedDatabase::open_with_service(&db_dir, port)?;
+        } else {
+            EmbeddedDatabase::open(&db_dir)?;
         }
         EmbeddedClient::connect_or_create_then_connect(
             &self.db_dir,
@@ -964,17 +971,14 @@ impl EmbeddedDatabase {
         Ok(())
     }
 
-    /// Close the embedded database (sync).
-    /// Embedded mode: no-op. Same as seekdb-js internal-client-embedded.ts — we do not call
-    /// seekdb_close() because: (1) DB is process-local, no need to manually close;
-    /// (2) seekdb_close() may block (fsync, locks, background threads) and block the event loop.
+    /// Close the embedded database (sync). Calls seekdb_close() once; safe to call multiple times.
     pub fn close() {
-        // No-op for embedded: avoid C ABI seekdb_close() blocking/hang
+        close_embedded_once();
     }
 
-    /// Close the embedded database (async). No-op for same reason as close().
+    /// Close the embedded database (async). For embedded, delegates to sync close().
     pub async fn close_async() {
-        // No-op for embedded: avoid calling seekdb_close()
+        Self::close();
     }
 }
 

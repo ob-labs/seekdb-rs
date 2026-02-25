@@ -1,17 +1,15 @@
 #![cfg(feature = "embedded")]
 #![allow(dead_code)] // Helpers are used by different test binaries; not all use every symbol.
 //! Shared helpers for embedded integration tests.
-//! Open DB once on main thread, then run async tests via run_embedded_tests(run_tests).
+//! run_embedded_tests: main thread open() then block_on(sentinel + tests) then close(). Sentinel keeps one connection so the last client drop does not trigger close between cases; close-then-open in C library can hang (re-init after soft close).
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use seekdb_rs::{EmbeddedConfig, EmbeddedDatabase, EmbeddingFunction, Embeddings, SeekDbError};
-
+use seekdb_rs::{EmbeddedConfig, EmbeddedClient, EmbeddedDatabase, EmbeddingFunction, Embeddings, SeekDbError};
 
 /// Single database directory for all embedded integration tests.
-/// Uses `tests/seekdb.db`, normalized to absolute path so open and connect use the same path regardless of cwd.
 pub fn shared_db_dir() -> PathBuf {
     let base = PathBuf::from("tests/seekdb.db");
     if base.is_absolute() {
@@ -23,9 +21,7 @@ pub fn shared_db_dir() -> PathBuf {
     }
 }
 
-/// Unified entry: open DB once on main thread with shared path, then run async tests.
-/// Call from each test's `main()` as `common::run_embedded_tests(run_tests)`.
-/// All test cases use the same directory via `shared_db_dir()`; do not call `open` again in tests.
+/// Main thread: open() once, hold a sentinel connection, run tests, then close(). Sentinel avoids close between cases so we never do close-then-open (re-init can hang).
 pub fn run_embedded_tests<Fut>(run: fn() -> Fut)
 where
     Fut: std::future::Future<Output = Result<()>>,
@@ -39,12 +35,22 @@ where
         eprintln!("{:?}", e);
         std::process::exit(1);
     }
+    let dir_str = init_dir.to_string_lossy().to_string();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    match rt.block_on(run()) {
-        Ok(()) => {}
+    let result = rt.block_on(async {
+        let _sentinel = EmbeddedClient::builder()
+            .db_dir(&dir_str)
+            .database("test")
+            .build()
+            .await?;
+        run().await
+    });
+    EmbeddedDatabase::close();
+    match result {
+        Ok(()) => std::process::exit(0),
         Err(e) => {
             eprintln!("{:?}", e);
             std::process::exit(1);
@@ -53,7 +59,7 @@ where
 }
 
 /// When false, tests that call `EmbeddedDatabase::open()` should skip (return Ok(())),
-/// to avoid SIGSEGV when open runs on a non-main thread (see docs/debugging_embedded.md).
+/// since open must run on the main thread.
 pub fn skip_if_no_integration() -> bool {
     std::env::var("SEEKDB_EMBEDDED_INTEGRATION").ok().as_deref() != Some("1")
 }

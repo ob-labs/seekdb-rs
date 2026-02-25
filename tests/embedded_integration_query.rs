@@ -21,18 +21,18 @@ fn main() {
 
 #[cfg(feature = "embedded")]
 async fn run_tests() -> Result<()> {
-    embedded_basic_query_operations().await?;
-    embedded_filter_operations().await?;
+    query_execute_and_fetch().await?;
+    query_filter_where().await?;
     Ok(())
 }
 
+/// Execute + fetch_all (mirrors server collection_query_and_filters style).
 #[cfg(feature = "embedded")]
-async fn embedded_basic_query_operations() -> Result<()> {
+async fn query_execute_and_fetch() -> Result<()> {
     let db_dir = shared_db_dir();
     let client = Client::builder()
         .path(db_dir.to_string_lossy().as_ref())
         .database("test")
-        .skip_open(true)
         .build()
         .await?;
     client.execute(
@@ -47,13 +47,13 @@ async fn embedded_basic_query_operations() -> Result<()> {
     Ok(())
 }
 
+/// SQL WHERE filter (mirrors server collection_query_and_filters).
 #[cfg(feature = "embedded")]
-async fn embedded_filter_operations() -> Result<()> {
+async fn query_filter_where() -> Result<()> {
     let db_dir = shared_db_dir();
     let client = Client::builder()
         .path(db_dir.to_string_lossy().as_ref())
         .database("test")
-        .skip_open(true)
         .build()
         .await?;
     client.execute("CREATE TABLE IF NOT EXISTS test_filter (id INT PRIMARY KEY, score INT)").await?;

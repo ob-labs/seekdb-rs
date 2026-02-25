@@ -49,6 +49,19 @@ cargo build
 - 可选启用 `embedding` feature，集成基于 ONNX 的默认文本向量模型 `DefaultEmbedding`（依赖 `reqwest` / `tokenizers` / `ort`）。
 - 可选启用 `sync` feature，提供基于内部 Tokio runtime 的阻塞版客户端 `SyncServerClient` / `SyncCollection`，方便纯同步项目直接使用。
 
+### 运行示例（Examples）
+
+仓库内提供以下三个示例，默认使用**嵌入式**连接；如需 Server 模式，在示例中取消注释“Server mode”代码块并注释掉嵌入式块即可。
+
+| 示例                    | 说明                                                                             | 命令                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `simple_example`        | 嵌入式 + DefaultEmbedding：建表、按文档 add、query_texts 查询                    | `cargo run --example simple_example --no-default-features --features embedded,embedding`        |
+| `complete_example`      | 完整能力：DML（add/update）、DQL（query/get）、Filter、hybrid_search、count/peek | `cargo run --example complete_example --no-default-features --features embedded`                |
+| `hybrid_search_example` | query_texts 与 hybrid_search_advanced 对比（关键词 + 向量、独立 filter、RRF）    | `cargo run --example hybrid_search_example --no-default-features --features embedded,embedding` |
+
+- 示例中 Server 模式连接为注释形式。连接 **SeekDB** 时不需要设置租户（默认为 sys）；连接 **OceanBase** 时可通过 `.tenant("your_tenant")` 指定租户（默认 `"sys"`）。
+- **嵌入式进程退出**：当最后一个 embedded 连接被 drop 时，库会自动调用 `seekdb_close()`，**一般无需在示例或业务中手动 close**；仅在需要提前关闭或 `process::exit` 前显式释放时，可调用 `seekdb_rs::EmbeddedDatabase::close()`。
+
 ---
 
 ## 1. Client Connection
@@ -87,7 +100,6 @@ async fn main() -> Result<(), SeekDbError> {
     let client = Client::builder()
         .host("127.0.0.1")
         .port(2881)
-        .tenant("sys")
         .database("test")
         .user("root")
         .password("")
@@ -97,6 +109,8 @@ async fn main() -> Result<(), SeekDbError> {
     Ok(())
 }
 ```
+
+- 连接 **SeekDB** 时不需要设置租户（默认为 sys）；连接 **OceanBase** 时 `tenant` 可选（默认 `"sys"`），需自定义租户时链式调用 `.tenant("your_tenant")`。
 
 ### 1.1 Server Client（直接使用 `ServerClient`）
 
@@ -109,7 +123,6 @@ async fn main() -> Result<(), SeekDbError> {
     let client = ServerClient::builder()
         .host("127.0.0.1") // host
         .port(2881)        // port
-        .tenant("sys")     // tenant
         .database("test")  // database
         .user("root")      // user（不含 tenant 后缀）
         .password("")      // password
@@ -125,7 +138,7 @@ async fn main() -> Result<(), SeekDbError> {
 
 Rust 版 `ServerClient` 与 Python 版 `RemoteServerClient` 类似：
 
-- 使用 `user@tenant` 的身份连接（内部自动拼接）。
+- 使用 `user@tenant` 的身份连接（内部自动拼接）。连接 SeekDB 时不需要设置租户（默认为 sys）；连接 OceanBase 时可指定其他租户。
 - 使用 MySQL 协议访问 SeekDB / OceanBase。
 
 ### 1.2 使用环境变量构建配置
@@ -136,7 +149,7 @@ Rust 版 `ServerClient` 与 Python 版 `RemoteServerClient` 类似：
 
 - `SERVER_HOST`
 - `SERVER_PORT`（默认 2881）
-- `SERVER_TENANT`
+- `SERVER_TENANT`（连接 SeekDB 时可不设置，默认为 sys；连接 OceanBase 时可指定租户）
 - `SERVER_DATABASE`
 - `SERVER_USER`
 - `SERVER_PASSWORD`
@@ -387,8 +400,9 @@ async fn main() -> Result<(), SeekDbError> {
 }
 ```
 
-> 与 Python 不同：  
-> - Python 可省略 configuration 或 embedding_function，由 SDK 推断维度。  
+> 与 Python 不同：
+>
+> - Python 可省略 configuration 或 embedding_function，由 SDK 推断维度。
 > - Rust 当前要求创建时提供 `HnswConfig`，否则会返回错误：  
 >   `SeekDbError::Config("HnswConfig must be provided when creating a collection")`。
 
@@ -1167,7 +1181,7 @@ SEEKDB_INTEGRATION=1 SERVER_HOST=127.0.0.1 SERVER_PORT=2881 SERVER_TENANT=sys SE
 - Collection DML / 元信息 / upsert 语义（`tests/integration_collection_dml.rs`）
 - ONNX 默认 embedding 的自动向量生成与查询（`tests/integration_embedding.rs`，需 `embedding` feature）
 - 高级 hybrid search 行为（`tests/integration_hybrid.rs`）
-- README 示例片段（`tests/readme_test.rs`）
+- README 示例流程（`integration_client` + `integration_collection_dml::collection_get_or_create_and_legacy_dml`）
 - 同步客户端包装（`tests/integration_sync.rs`，需 `sync` feature）
 
 **嵌入式集成测试**（`embedded` feature，`harness = false`）：使用目录 `tests/seekdb.db`，运行 6 个 embedded 测试二进制，例如：
@@ -1178,8 +1192,7 @@ cargo test --no-default-features --features embedded \
   --test embedded_integration_collection_dml \
   --test embedded_integration_query \
   --test embedded_integration_hybrid \
-  --test embedded_integration_embedding \
-  --test embedded_readme_test
+  --test embedded_integration_embedding
 ```
 
 ---
@@ -1188,24 +1201,24 @@ cargo test --no-default-features --features embedded \
 
 最后按模块对比一下与 Python 版的完成度：
 
-| 模块 / 能力                                       | Status | 说明 |
-|--------------------------------------------------|--------|------|
-| 错误类型 `SeekDbError`                           | ✅ 已实现 | 对齐设计文档，统一错误返回 |
-| 配置 `ServerConfig` / `HnswConfig` / `DistanceMetric` | ✅ 已实现 | 支持 `from_env`，字段与 Python 对齐 |
-| 公共类型 `QueryResult` / `GetResult` / `IncludeField` / `Database` | ✅ 已实现 | 结构与 Python 返回值一致 |
-| Server 连接层 `ServerClient`                     | ✅ 已实现 | `connect/from_config/from_env/execute/fetch_all` |
-| Collection 管理：create/get/get_or_create/delete/list/has/count | ✅ 已实现 | 表名 `c$v1${name}`、向量列/索引结构与 Python 一致 |
-| Collection DML：`add/update/upsert/delete`（显式 embeddings） | ✅ 已实现 | 语义对齐 Python，含长度和维度校验 |
-| Collection DQL：`query_embeddings/get/count/peek` | ✅ 已实现 | 支持 metadata/doc 过滤与 include 字段 |
-| 过滤表达式 `Filter` / `DocFilter` + SQL 生成     | ✅ 已实现 | 覆盖 `$eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$and/$or/$not` 和 `$contains/$regex` |
-| 集成测试（Server 模式）                          | ✅ 已实现 | 需真实 SeekDB/OceanBase 环境 |
-| `EmbeddingFunction` trait                        | ✅ 已实现 | 抽象已定义，可自实现 |
-| 默认嵌入实现 `DefaultEmbedding` 模型加载与推理    | ✅ 已实现 | 在 `embedding` feature 下提供基于 ONNX 的 `all-MiniLM-L6-v2` 本地推理 |
-| 自动 embedding：`add/update/upsert` 文本转向量   | ✅ 已实现 | Collection 绑定 `embedding_function` 且仅传 `documents` 时自动生成向量 |
-| 文本查询：`Collection::query_texts`              | ✅ 已实现 | 基于 `embedding_function` 自动生成查询向量并复用 `query_embeddings` |
-| 同步包装：`SyncServerClient` / `SyncCollection`  | ✅ 已实现 | 在 `sync` feature 下提供阻塞版客户端，内部基于 Tokio runtime |
-| Hybrid Search：`Collection::hybrid_search`       | ✅ 已实现 | 支持文本向量查询 + metadata/doc 过滤；复杂 search_params 需手动构造 |
-| Embedded Client（嵌入式模式）                    | ✅ 已实现 | 通过 `Client::builder().path(...)` 或 `EmbeddedClient`，与 pyseekdb 对齐 |
-| RAG Demo（Rust 端到端示例）                      | ❌ 未实现 | 目前仅有 Python demo |
+| 模块 / 能力                                                        | Status    | 说明                                                                                                                                                                          |
+| ------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 错误类型 `SeekDbError`                                             | ✅ 已实现 | 对齐设计文档，统一错误返回                                                                                                                                                    |
+| 配置 `ServerConfig` / `HnswConfig` / `DistanceMetric`              | ✅ 已实现 | 支持 `from_env`，字段与 Python 对齐                                                                                                                                           |
+| 公共类型 `QueryResult` / `GetResult` / `IncludeField` / `Database` | ✅ 已实现 | 结构与 Python 返回值一致                                                                                                                                                      |
+| Server 连接层 `ServerClient`                                       | ✅ 已实现 | `connect/from_config/from_env/execute/fetch_all`                                                                                                                              |
+| Collection 管理：create/get/get_or_create/delete/list/has/count    | ✅ 已实现 | 表名 `c$v1${name}`、向量列/索引结构与 Python 一致                                                                                                                             |
+| Collection DML：`add/update/upsert/delete`（显式 embeddings）      | ✅ 已实现 | 语义对齐 Python，含长度和维度校验                                                                                                                                             |
+| Collection DQL：`query_embeddings/get/count/peek`                  | ✅ 已实现 | 支持 metadata/doc 过滤与 include 字段                                                                                                                                         |
+| 过滤表达式 `Filter` / `DocFilter` + SQL 生成                       | ✅ 已实现 | 覆盖 `$eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$and/$or/$not` 和 `$contains/$regex`                                                                                                 |
+| 集成测试（Server 模式）                                            | ✅ 已实现 | 需真实 SeekDB/OceanBase 环境                                                                                                                                                  |
+| `EmbeddingFunction` trait                                          | ✅ 已实现 | 抽象已定义，可自实现                                                                                                                                                          |
+| 默认嵌入实现 `DefaultEmbedding` 模型加载与推理                     | ✅ 已实现 | 在 `embedding` feature 下提供基于 ONNX 的 `all-MiniLM-L6-v2` 本地推理                                                                                                         |
+| 自动 embedding：`add/update/upsert` 文本转向量                     | ✅ 已实现 | Collection 绑定 `embedding_function` 且仅传 `documents` 时自动生成向量                                                                                                        |
+| 文本查询：`Collection::query_texts`                                | ✅ 已实现 | 基于 `embedding_function` 自动生成查询向量并复用 `query_embeddings`                                                                                                           |
+| 同步包装：`SyncServerClient` / `SyncCollection`                    | ✅ 已实现 | 在 `sync` feature 下提供阻塞版客户端，内部基于 Tokio runtime                                                                                                                  |
+| Hybrid Search：`Collection::hybrid_search`                         | ✅ 已实现 | 支持文本向量查询 + metadata/doc 过滤；复杂 search_params 需手动构造                                                                                                           |
+| Embedded Client（嵌入式模式）                                      | ✅ 已实现 | 通过 `Client::builder().path(...)` 或 `EmbeddedClient`，与 pyseekdb 对齐；进程退出时统一 close（最后连接 drop 时自动 `seekdb_close()`），可选显式 `EmbeddedDatabase::close()` |
+| RAG Demo（Rust 端到端示例）                                        | ❌ 未实现 | 目前仅有 Python demo                                                                                                                                                          |
 
-如果你在使用过程中发现某个与 Python 版行为不一致的地方，欢迎直接对照 `src/pyseekdb` 的实现细节，一起完善 Rust SDK。 
+如果你在使用过程中发现某个与 Python 版行为不一致的地方，欢迎直接对照 `src/pyseekdb` 的实现细节，一起完善 Rust SDK。

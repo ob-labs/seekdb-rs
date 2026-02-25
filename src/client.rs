@@ -55,8 +55,6 @@ pub struct ClientBuilder {
     autocommit: bool,
     #[cfg(feature = "embedded")]
     port_embedded: Option<i32>,
-    #[cfg(feature = "embedded")]
-    skip_open: bool,
     #[cfg(feature = "server")]
     max_connections: u32,
 }
@@ -82,8 +80,6 @@ impl ClientBuilder {
             autocommit: false,
             #[cfg(feature = "embedded")]
             port_embedded: None,
-            #[cfg(feature = "embedded")]
-            skip_open: false,
             #[cfg(feature = "server")]
             max_connections: 5,
         }
@@ -139,12 +135,6 @@ impl ClientBuilder {
     }
 
     #[cfg(feature = "embedded")]
-    pub fn skip_open(mut self, skip_open: bool) -> Self {
-        self.skip_open = skip_open;
-        self
-    }
-
-    #[cfg(feature = "embedded")]
     pub fn port_embedded(mut self, port: Option<i32>) -> Self {
         self.port_embedded = port;
         self
@@ -187,8 +177,7 @@ impl ClientBuilder {
                 .db_dir(path)
                 .database(self.database)
                 .autocommit(self.autocommit)
-                .port(self.port_embedded)
-                .skip_open(self.skip_open);
+                .port(self.port_embedded);
             let client = b.build().await?;
             Ok(Client::Embedded(client))
         } else if let Some(host) = self.host {
@@ -210,8 +199,7 @@ impl ClientBuilder {
                 .db_dir(default_path)
                 .database(self.database)
                 .autocommit(self.autocommit)
-                .port(self.port_embedded)
-                .skip_open(self.skip_open);
+                .port(self.port_embedded);
             let client = b.build().await?;
             Ok(Client::Embedded(client))
         }
@@ -245,8 +233,7 @@ impl ClientBuilder {
             .db_dir(path)
             .database(self.database)
             .autocommit(self.autocommit)
-            .port(self.port_embedded)
-            .skip_open(self.skip_open);
+            .port(self.port_embedded);
         let client = b.build().await?;
         Ok(Client::Embedded(client))
     }

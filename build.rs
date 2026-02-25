@@ -106,7 +106,7 @@ fn download_libseekdb(out_dir: &str) -> Result<(PathBuf, Option<PathBuf>), Box<d
     let lib_marker = download_dir.join(dynamic_lib);
 
     if lib_marker.exists() {
-        println!("cargo:warning=Reusing libseekdb from {}", download_dir.display());
+        println!("Reusing libseekdb from {}", download_dir.display());
     } else {
         let client = http_client()?;
         let url = format!("{}/{}", SEEKDB_DOWNLOAD_BASE, archive_name);
@@ -162,7 +162,7 @@ fn ensure_libseekdb(
     archive_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if archive_path.exists() {
-        println!("cargo:warning=libseekdb archive already present at {}", archive_path.display());
+        println!("libseekdb archive already present at {}", archive_path.display());
         return Ok(());
     }
     let tmp_path = archive_path.with_extension("download");
@@ -182,7 +182,7 @@ fn ensure_libseekdb(
     let mut tmp_file = fs::File::create(&tmp_path)?;
     io::copy(&mut response, &mut tmp_file)?;
     fs::rename(&tmp_path, archive_path)?;
-    println!("cargo:warning=Downloaded libseekdb from {}", url);
+    println!("Downloaded libseekdb from {}", url);
     Ok(())
 }
 
@@ -191,7 +191,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), Box<dyn std::
     let file = fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     archive.extract(dest)?;
-    println!("cargo:warning=Extracted libseekdb to {}", dest.display());
+    println!("Extracted libseekdb to {}", dest.display());
     Ok(())
 }
 
@@ -228,7 +228,7 @@ fn copy_lib_to_deps(
     out_dir: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(deps_dir) = profile_deps_dir(out_dir) else {
-        println!("cargo:warning=Could not determine target/deps directory, skipping runtime copy");
+        println!("Could not determine target/deps directory, skipping runtime copy");
         return Ok(());
     };
     fs::create_dir_all(&deps_dir)?;
@@ -238,7 +238,23 @@ fn copy_lib_to_deps(
         fs::remove_file(&dest)?;
     }
     fs::copy(&source, &dest)?;
-    println!("cargo:warning=Copied libseekdb to {}", dest.display());
+    println!("Copied libseekdb to {}", dest.display());
+
+    // macOS: main dylib may use @loader_path/libs/*.dylib — copy libs/ to deps/libs/
+    let libs_src = download_dir.join("libs");
+    if libs_src.is_dir() {
+        let libs_dest = deps_dir.join("libs");
+        fs::create_dir_all(&libs_dest)?;
+        for e in fs::read_dir(&libs_src)? {
+            let e = e?;
+            let name = e.file_name();
+            let to = libs_dest.join(&name);
+            if e.file_type()?.is_file() {
+                fs::copy(e.path(), &to)?;
+            }
+        }
+        println!("Copied libseekdb libs/ to {}", libs_dest.display());
+    }
     Ok(())
 }
 

@@ -20,16 +20,16 @@ mod run {
     }
 
     async fn run_tests() -> Result<()> {
-        embedded_default_embedding_placeholder().await?;
+        default_embedding_new().await?;
         Ok(())
     }
 
-    async fn embedded_default_embedding_placeholder() -> Result<()> {
+    /// DefaultEmbedding::new() and dimension (mirrors server collection_*_default_embedding tests).
+    async fn default_embedding_new() -> Result<()> {
         let db_dir = shared_db_dir();
         let _client = Client::builder()
             .path(db_dir.to_string_lossy().as_ref())
             .database("test")
-            .skip_open(true)
             .build()
             .await?;
         let ef = DefaultEmbedding::new()?;

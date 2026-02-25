@@ -170,5 +170,4 @@ jobs:
             --test embedded_integration_collection_dml \
             --test embedded_integration_query \
             --test embedded_integration_hybrid \
-            --test embedded_integration_embedding \
-            --test embedded_readme_test
+            --test embedded_integration_embedding

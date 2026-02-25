@@ -21,17 +21,17 @@ fn main() {
 
 #[cfg(feature = "embedded")]
 async fn run_tests() -> Result<()> {
-    embedded_hybrid_search_placeholder().await?;
+    collection_hybrid_search_basic().await?;
     Ok(())
 }
 
+/// Placeholder for hybrid search (mirrors server collection_hybrid_search_basic).
 #[cfg(feature = "embedded")]
-async fn embedded_hybrid_search_placeholder() -> Result<()> {
+async fn collection_hybrid_search_basic() -> Result<()> {
     let db_dir = shared_db_dir();
     let _client = Client::builder()
         .path(db_dir.to_string_lossy().as_ref())
         .database("test")
-        .skip_open(true)
         .build()
         .await?;
     Ok(())
