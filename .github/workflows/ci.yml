@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+    paths-ignore:
+      - "README.md"
+      - "README_zh-CN.md"
+      - "**/*.md"
+  push:
+    branches: [main, master, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    if: github.repository == 'ob-labs/seekdb-rs'
+    name: Check (fmt, clippy, build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@2
+        with:
+          key: ${{ runner.os }}-check
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build (default features)
+        run: cargo build --all-targets
+
+      - name: Build (server only)
+        run: cargo build --no-default-features --features server
+
+  test:
+    if: github.repository == 'ob-labs/seekdb-rs'
+    name: Test (server only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@2
+        with:
+          key: ${{ runner.os }}-test
+
+      - name: Run tests (server only)
+        run: cargo test --no-default-features --features server --all-targets
+        env:
+          SEEKDB_INTEGRATION: ""
+
+  test-default:
+    if: github.repository == 'ob-labs/seekdb-rs'
+    name: Test (default features)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      - name: Cache
+        uses: Swatinem/rust-cache@2
+        with:
+          key: ${{ runner.os }}-test-default
+      - name: Run tests (default features)
+        run: cargo test --all-targets
+        env:
+          SEEKDB_INTEGRATION: ""
+
+  # Server-mode tests against real SeekDB container (same as seekdb-js).
+  test-server:
+    if: github.repository == 'ob-labs/seekdb-rs'
+    name: Test server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@2
+        with:
+          key: ${{ runner.os }}-test-server
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Start seekdb container
+        run: |
+          docker run --name seekdb-server -p 2881:2881 -d oceanbase/seekdb:latest
+          echo "Waiting for port 2881..."
+          for i in $(seq 1 60); do
+            if nc -z 127.0.0.1 2881 2>/dev/null; then
+              echo "Port 2881 is open"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout waiting for port 2881"
+              docker logs seekdb-server
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs seekdb-server
+
+      - name: Run server tests
+        run: cargo test --all-targets
+        env:
+          SEEKDB_INTEGRATION: "1"
+          SERVER_HOST: 127.0.0.1
+          SERVER_PORT: 2881
+          SERVER_USER: root
+          SERVER_PASSWORD: ""
+          SERVER_DATABASE: test
+          SERVER_TENANT: sys
+
+  # Embedded-mode tests on multiple platforms (align with seekdb-js test-embedded).
+  test-embedded:
+    if: github.repository == 'ob-labs/seekdb-rs'
+    name: Test embedded (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+          - platform: darwin-arm64
+            runner: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@2
+        with:
+          key: ${{ runner.os }}-${{ matrix.platform }}-embedded
+
+      - name: Build (embedded) and run embedded tests
+        run: |
+          cargo test --no-default-features --features embedded \
+            --test embedded_integration_client \
+            --test embedded_integration_collection_dml \
+            --test embedded_integration_query \
+            --test embedded_integration_hybrid \
+            --test embedded_integration_embedding

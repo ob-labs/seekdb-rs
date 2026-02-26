@@ -8,12 +8,14 @@ publish = true
 repository = "https://github.com/ob-labs/seekdb-rs"
 keywords = ["seekdb", "oceanbase", "vector-database", "mysql", "rag"]
 categories = ["database", "api-bindings", "asynchronous", "network-programming"]
+build = "build.rs"
 
 [features]
 default = ["server", "embedding"]
 server = []
 embedding = ["reqwest", "tokenizers", "ort", "hf-hub"]
 sync = []
+embedded = ["build-reqwest", "zip", "embedding"]
 
 [dependencies]
 async-trait = "0.1"
@@ -29,4 +31,40 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 reqwest = { version = "0.11", features = ["json", "gzip", "rustls-tls", "blocking"], optional = true }
 tokenizers = { version = "0.15", optional = true }
 ort = { version = "2.0.0-rc.10", optional = true }
+ndarray = { version = "0.15", optional = true }
 hf-hub = { version = "0.4.3", default-features = false, features = ["ureq"], optional = true }
+
+[build-dependencies]
+bindgen = { version = "0.71", default-features = false, features = ["runtime"] }
+build-reqwest = { package = "reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+zip = { version = "1", default-features = false, features = ["deflate"], optional = true }
+
+# Examples (run with e.g. cargo run --example simple_example --no-default-features --features embedded,embedding)
+[[example]]
+name = "simple_example"
+required-features = ["embedded", "embedding"]
+[[example]]
+name = "complete_example"
+required-features = ["embedded"]
+[[example]]
+name = "hybrid_search_example"
+required-features = ["embedded", "embedding"]
+
+[dev-dependencies]
+# Server integration tests: tests/integration_*.rs are auto-discovered.
+# Embedded integration tests: harness = false so main() uses current-thread runtime and block_on.
+[[test]]
+name = "embedded_integration_client"
+harness = false
+[[test]]
+name = "embedded_integration_collection_dml"
+harness = false
+[[test]]
+name = "embedded_integration_hybrid"
+harness = false
+[[test]]
+name = "embedded_integration_query"
+harness = false
+[[test]]
+name = "embedded_integration_embedding"
+harness = false

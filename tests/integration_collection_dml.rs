@@ -2,13 +2,13 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    AddBatch, DeleteQuery, DistanceMetric, Filter, GetQuery, HnswConfig, IncludeField,
-    SeekDbError, ServerClient, UpdateBatch, UpsertBatch,
+    AddBatch, AdminApi, DeleteQuery, DistanceMetric, Embedding, EmbeddingFunction, Filter,
+    GetQuery, HnswConfig, IncludeField, SeekDbError, UpdateBatch, UpsertBatch,
 };
 use serde_json::json;
 
 mod common;
-use common::{ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
 
 /// Creating a collection without HnswConfig should return a config error.
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn collection_create_without_hnsw_config_errors() -> Result<()> {
         return Ok(());
     };
 
-    let client = ServerClient::from_config(config).await?;
+    let client = client_from_config(config.clone()).await?;
     let name = format!("no_cfg_coll_{}", ts_suffix());
 
     let res = client
@@ -44,13 +44,13 @@ async fn collection_add_invalid_embedding_dimension_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_invalid_dim_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("invalid_dim_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -89,13 +89,13 @@ async fn collection_add_with_auto_embedding() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_auto_emb_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("auto_emb_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -142,13 +142,13 @@ async fn collection_add_length_mismatch_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_len_mismatch_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("len_mismatch_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -188,14 +188,14 @@ async fn collection_dml_roundtrip() -> Result<()> {
         return Ok(());
     };
     // Create a dedicated database for the test
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_dml_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     // Use the new database
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -269,13 +269,13 @@ async fn collection_quickstart_like_flow() -> Result<()> {
         return Ok(());
     };
 
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_quickstart_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("quickstart_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -330,13 +330,13 @@ async fn collection_upsert_metadata_and_partial_fields() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_upsert_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("upsert_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -413,13 +413,13 @@ async fn collection_delete_without_any_condition_errors() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_delete_guard_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("delete_guard_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
@@ -459,13 +459,13 @@ async fn collection_list_and_has() -> Result<()> {
     let Some(config) = load_config_for_integration() else {
         return Ok(());
     };
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_list_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let hnsw = HnswConfig {
         dimension: 3,
@@ -495,5 +495,71 @@ async fn collection_list_and_has() -> Result<()> {
     client.delete_collection(&coll1).await.ok();
     client.delete_collection(&coll2).await.ok();
     admin.delete_database(&db_name, None).await.ok();
+    Ok(())
+}
+
+/// README-style flow: get_or_create_collection, list/get/has/count_collection, legacy add/update/get/delete/count.
+#[tokio::test]
+async fn collection_get_or_create_and_legacy_dml() -> Result<()> {
+    let Some(config) = load_config_for_integration() else {
+        return Ok(());
+    };
+    let client = client_from_config(config).await?;
+    let coll_name = format!("readme_coll_{}", ts_suffix());
+    let hnsw = HnswConfig {
+        dimension: 3,
+        distance: DistanceMetric::Cosine,
+    };
+    if client.has_collection(&coll_name).await? {
+        client.delete_collection(&coll_name).await?;
+    }
+    let coll = client
+        .get_or_create_collection(
+            &coll_name,
+            Some(hnsw),
+            None::<Box<dyn EmbeddingFunction>>,
+        )
+        .await?;
+
+    let _list = client.list_collections().await?;
+    let _c = client
+        .get_collection(&coll_name, None::<Box<dyn EmbeddingFunction>>)
+        .await?;
+    assert!(client.has_collection(&coll_name).await?);
+    let _cnt = client.count_collection().await?;
+
+    let ids = vec!["item1".to_string(), "item2".to_string()];
+    let embeddings: Vec<Embedding> = vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]];
+    let documents = vec!["Document 1".to_string(), "Document 2".to_string()];
+    let metadatas = vec![json!({"category": "AI"}), json!({"category": "ML"})];
+    coll.add(&ids, Some(&embeddings), Some(&metadatas), Some(&documents))
+        .await?;
+    coll.update(
+        &["item1".to_string()],
+        Some(&[vec![0.7, 0.8, 0.9]]),
+        Some(&[json!({"category": "AI", "score": 96})]),
+        Some(&["Updated Document 1".to_string()]),
+    )
+    .await?;
+    let r = coll
+        .get(
+            Some(&["item1".to_string()]),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(!r.ids.is_empty());
+    coll.delete(
+        Some(&["item1".to_string(), "item2".to_string()]),
+        None,
+        None,
+    )
+    .await?;
+    assert_eq!(coll.count().await?, 0);
+
+    client.delete_collection(&coll_name).await.ok();
     Ok(())
 }

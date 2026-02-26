@@ -1,8 +1,8 @@
-# seekdb-rs – Rust SDK for SeekDB (Server Mode)
+# seekdb-rs – Rust SDK for SeekDB
 
 > Also available in: [简体中文](README_zh-CN.md)
 
-`seekdb-rs` is the official Rust SDK for SeekDB, currently focused on the **Server mode** and talking to SeekDB / OceanBase over the MySQL protocol.  
+`seekdb-rs` is the official Rust SDK for SeekDB, It provides a **unified `Client`** (aligned with pyseekdb): use **path** for embedded mode or **host/port** for server mode. Server mode talks to SeekDB / OceanBase over the MySQL protocol.  
 The APIs are designed to closely mirror the Python SDK (`pyseekdb`), but this crate is still **experimental / incomplete** and may evolve.
 
 ---
@@ -48,8 +48,22 @@ cargo build
 Features:
 
 - `server` (enabled by default): async client for the remote SeekDB / OceanBase server.
+- `embedded` (optional): embedded client (native SeekDB C library) and embedding support; libseekdb is downloaded from OceanBase S3 and cached under `target/libseekdb`.
 - `embedding` (enabled by default): built‑in ONNX‑based embedding implementation (`DefaultEmbedding`), depends on `reqwest` / `tokenizers` / `ort` / `hf-hub`.
 - `sync` (optional): blocking wrapper around the async client (`SyncServerClient`, `SyncCollection`), backed by an internal Tokio runtime.
+
+Example enabling `embedded` from crates.io:
+
+```toml
+[dependencies]
+seekdb-rs = { version = "0.1", features = ["embedded"] }
+```
+
+**Building with embedded (libseekdb):**  
+The build downloads libseekdb from OceanBase S3 and caches it under **`target/libseekdb`** (reused on subsequent builds).
+
+- Supported targets: `darwin-arm64`, `linux-x64`, `linux-arm64` (archive names: `libseekdb-*.zip`).
+- On slow networks, set **`HTTP_TIMEOUT`** or **`CARGO_HTTP_TIMEOUT`** (seconds), e.g. `HTTP_TIMEOUT=300 cargo build --features embedded --no-default-features`.
 
 Example enabling `sync` and `embedding` explicitly from crates.io:
 
@@ -58,16 +72,70 @@ Example enabling `sync` and `embedding` explicitly from crates.io:
 seekdb-rs = { version = "0.1", features = ["server", "embedding", "sync"] }
 ```
 
+**Running examples**
+
+The repo includes three examples (aligned with pyseekdb). They use **embedded** mode by default; to use server mode, uncomment the “Server mode” block in the example and comment out the embedded block.
+
+| Example                 | Description                                                                        | Command                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `simple_example`        | Embedded + DefaultEmbedding: create collection, add by documents, query_texts      | `cargo run --example simple_example --no-default-features --features embedded,embedding`        |
+| `complete_example`      | Full flow: DML (add/update), DQL (query/get), filters, hybrid_search, count/peek   | `cargo run --example complete_example --no-default-features --features embedded`                |
+| `hybrid_search_example` | query_texts vs hybrid_search_advanced (keyword + vector, independent filters, RRF) | `cargo run --example hybrid_search_example --no-default-features --features embedded,embedding` |
+
+- In the commented server block: for **SeekDB** you do not need to set tenant (default is sys); when connecting to **OceanBase**, you can set `.tenant("your_tenant")` (default `"sys"`) if needed.
+- **Embedded process exit**: When the last embedded connection is dropped, the library calls `seekdb_close()` automatically; you generally **do not need to call close manually**. Call `seekdb_rs::EmbeddedDatabase::close()` only when you need to shut down explicitly (e.g. before `process::exit`).
+
 ---
 
 ## 1. Client Connection
 
 The Python SDK exposes a single `Client` factory that hides embedded vs remote server.  
-In Rust we currently only support the **remote server client**, represented by `ServerClient`.
+In Rust, **`Client` is the unified entry** (aligned with pyseekdb): use **`path`** for embedded mode, or **`host`/`port`** for server mode. You can also use `ServerClient` / `EmbeddedClient` directly when you need their specific APIs.
 
-> Embedded mode (equivalent to Python’s embedded client) is not implemented in Rust yet.
+### 1.0 Unified `Client` (recommended)
 
-### 1.1 Connecting with `ServerClient`
+Use `Client::builder()` then either **`.path(...)`** for embedded or **`.host(...).port(...)`** for server. Default (no path and no host) is embedded with path `./seekdb.db`.
+
+**Embedded (path):**
+
+```rust
+use seekdb_rs::{Client, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    let client = Client::builder()
+        .path("./seekdb.db")   // embedded: database path
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+**Server (host + port):**
+
+```rust
+use seekdb_rs::{Client, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    let client = Client::builder()
+        .host("127.0.0.1")
+        .port(2881)
+        .database("test")
+        .user("root")
+        .password("")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+- For **SeekDB** you do not need to set tenant (default is sys); when connecting to **OceanBase**, `tenant` is optional (default `"sys"`); chain `.tenant("your_tenant")` for a custom tenant.
+
+### 1.1 Connecting with `ServerClient` (direct)
 
 ```rust
 use seekdb_rs::{ServerClient, SeekDbError};
@@ -78,8 +146,7 @@ async fn main() -> Result<(), SeekDbError> {
     let client = ServerClient::builder()
         .host("127.0.0.1") // host
         .port(2881)        // port
-        .tenant("sys")     // tenant
-        .database("demo")  // database
+        .database("test")  // database
         .user("root")      // user (without tenant suffix)
         .password("")      // password
         .max_connections(5)
@@ -94,7 +161,7 @@ async fn main() -> Result<(), SeekDbError> {
 
 The Rust `ServerClient` behaves similarly to Python’s `RemoteServerClient`:
 
-- Uses `user@tenant` behind the scenes to connect.
+- Uses `user@tenant` behind the scenes to connect. For SeekDB you do not need to set tenant (default is sys); when connecting to OceanBase you can specify another tenant.
 - Talks to SeekDB / OceanBase via the MySQL protocol.
 
 ### 1.2 Configuration from Environment Variables
@@ -105,7 +172,7 @@ Environment variables:
 
 - `SERVER_HOST`
 - `SERVER_PORT` (default: `2881`)
-- `SERVER_TENANT`
+- `SERVER_TENANT` (for SeekDB, omit or leave default sys; when connecting to OceanBase, set the tenant if needed)
 - `SERVER_DATABASE`
 - `SERVER_USER`
 - `SERVER_PASSWORD`
@@ -146,28 +213,118 @@ async fn main() -> Result<(), SeekDbError> {
 }
 ```
 
-### 1.3 Core Methods
+### 1.3 Embedded Mode Client
+
+For embedded mode, prefer the unified entry: `Client::builder().path("./seekdb.db").database("test").build().await?`.  
+Alternatively use `EmbeddedClient` directly when you need embedded-specific options (e.g. `from_env()`):
+
+```rust
+use seekdb_rs::{Client, EmbeddedClient, EmbeddedConfig, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    // Preferred: unified Client with path
+    let client = Client::builder()
+        .path("./seekdb.db")
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+
+    // Or EmbeddedClient directly (e.g. for from_env())
+    let client = EmbeddedClient::builder()
+        .db_dir("./seekdb.db")
+        .database("test")
+        .build()
+        .await?;
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+#### 1.3.1 Configuration from Environment Variables
+
+For embedded mode, you can also configure from environment variables:
+
+Environment variables (naming follows the same pattern as server mode):
+
+- `EMBEDDED_DB_DIR` (required) - Database directory path
+- `EMBEDDED_DATABASE` (required) - Database name (matches `SERVER_DATABASE` naming)
+- `EMBEDDED_PORT` (optional) - Port number (matches `SERVER_PORT` naming, default: None for embedded mode)
+- `EMBEDDED_AUTOCOMMIT` (optional, default: `false`) - Autocommit mode
+
+```bash
+export EMBEDDED_DB_DIR=./seekdb.db
+export EMBEDDED_DATABASE=demo
+export EMBEDDED_AUTOCOMMIT=false
+```
+
+```rust
+use seekdb_rs::{EmbeddedClient, EmbeddedConfig, SeekDbError};
+
+#[tokio::main]
+async fn main() -> Result<(), SeekDbError> {
+    // Build config from env
+    let config = EmbeddedConfig::from_env()?;
+
+    // Connect from config
+    let client = EmbeddedClient::from_config(config).await?;
+
+    // Or in a single step:
+    let client = EmbeddedClient::from_env().await?;
+
+    // Or mix env defaults with manual overrides
+    let client = EmbeddedClient::builder()
+        .from_env()? // prefill from env
+        .database("demo_override")
+        .build()
+        .await?;
+
+    client.execute("SELECT 1").await?;
+    Ok(())
+}
+```
+
+#### 1.3.2 Embedded process exit and close (unified close)
+
+In embedded mode, **the library closes the engine on process exit**; you do not need to call close manually in application or example code:
+
+- When the **last** embedded connection (`Client::Embedded` / `EmbeddedClient`) is dropped, `seekdb_close()` is called automatically (at most once).
+- In normal use you **do not** need to call `EmbeddedDatabase::close()` at the end of `main`; returning from `main` is enough.
+- Call **`seekdb_rs::EmbeddedDatabase::close()`** explicitly only when:
+  - You are about to call `std::process::exit(0)` and want to close the engine first, or
+  - You want to release the embedded engine earlier in a long-running process.
+
+Calling `EmbeddedDatabase::close()` multiple times or calling it before dropping the last connection is safe (the library ensures `seekdb_close()` runs only once).
+
+The `EmbeddedClient` API is similar to `ServerClient`:
+
+- Both implement `SqlBackend` and `AdminApi` traits
+- Both support collection management methods
+- Both support the same SQL execution patterns
+
+### 1.4 Core Methods
 
 There is no universal “mode‑switching” `Client` type in Rust; use `ServerClient` directly.
 
 Key async APIs:
 
-| Method / Property                               | Description                                                              |
-|-------------------------------------------------|--------------------------------------------------------------------------|
-| `ServerClient::builder()`                       | Fluent builder for creating a remote client                              |
-| `ServerClient::from_config(ServerConfig)`       | Connect from an explicit config                                          |
-| `ServerClient::from_env()`                      | Load config from env and connect                                         |
-| `ServerClient::pool()`                          | Access the underlying `MySqlPool`                                       |
-| `ServerClient::tenant()` / `database()`         | Inspect current tenant / database                                        |
-| `ServerClient::execute(sql)`                    | Execute a statement that does not return rows (`INSERT` / `UPDATE` /…)   |
-| `ServerClient::fetch_all(sql)`                  | Execute a query and return all rows                                      |
-| `ServerClient::create_collection(...)`          | Create a collection (see below)                                          |
-| `ServerClient::get_collection(...)`             | Get a `Collection` handle for an existing collection                     |
-| `ServerClient::get_or_create_collection(...)`   | Get or create a collection                                               |
-| `ServerClient::delete_collection(name)`         | Drop a collection                                                        |
-| `ServerClient::list_collections()`              | List all collection names in the current database                        |
-| `ServerClient::has_collection(name)`            | Check if a collection exists                                             |
-| `ServerClient::count_collection()`              | Count collections in the current database                                |
+| Method / Property                             | Description                                                            |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `ServerClient::builder()`                     | Fluent builder for creating a remote client                            |
+| `ServerClient::from_config(ServerConfig)`     | Connect from an explicit config                                        |
+| `ServerClient::from_env()`                    | Load config from env and connect                                       |
+| `ServerClient::pool()`                        | Access the underlying `MySqlPool`                                      |
+| `ServerClient::tenant()` / `database()`       | Inspect current tenant / database                                      |
+| `ServerClient::execute(sql)`                  | Execute a statement that does not return rows (`INSERT` / `UPDATE` /…) |
+| `ServerClient::fetch_all(sql)`                | Execute a query and return all rows                                    |
+| `ServerClient::create_collection(...)`        | Create a collection (see below)                                        |
+| `ServerClient::get_collection(...)`           | Get a `Collection` handle for an existing collection                   |
+| `ServerClient::get_or_create_collection(...)` | Get or create a collection                                             |
+| `ServerClient::delete_collection(name)`       | Drop a collection                                                      |
+| `ServerClient::list_collections()`            | List all collection names in the current database                      |
+| `ServerClient::has_collection(name)`          | Check if a collection exists                                           |
+| `ServerClient::count_collection()`            | Count collections in the current database                              |
 
 ---
 
@@ -622,31 +779,47 @@ Integration tests cover:
 - Hybrid search behavior.
 - Sync client wrappers (with the `sync` feature).
 
+**Embedded integration tests** (with `embedded` feature, `harness = false`):  
+They call `EmbeddedDatabase::open()` once on the main thread with a single directory (`tests/seekdb.db`), then run async tests via `common::run_embedded_tests(run_tests)`. Run a single test binary or the full embedded suite:
+
+```bash
+# Run one embedded test binary
+cargo test --features embedded --no-default-features --test embedded_integration_client
+
+# Run all 6 embedded test binaries (recommended for full verification)
+cargo test --no-default-features --features embedded \
+  --test embedded_integration_client \
+  --test embedded_integration_collection_dml \
+  --test embedded_integration_query \
+  --test embedded_integration_hybrid \
+  --test embedded_integration_embedding
+```
+
 ---
 
 ## 9. Feature Matrix
 
 A high‑level comparison with the Python SDK:
 
-| Area                                             | Status | Notes                                                                 |
-|--------------------------------------------------|--------|-----------------------------------------------------------------------|
-| Error type `SeekDbError`                         | ✅     | Unified error type, aligned with the design docs                      |
-| Config types `ServerConfig` / `HnswConfig` / `DistanceMetric` | ✅ | Includes `from_env` helpers                                           |
-| Common structs `QueryResult` / `GetResult` / `IncludeField` / `Database` | ✅ | Struct shapes match Python                                            |
-| Server client `ServerClient`                     | ✅     | `connect`/`from_config`/`from_env`/`execute`/`fetch_all`              |
-| Collection mgmt: create/get/get_or_create/delete/list/has/count | ✅ | Table naming, vector column/index follow Python conventions           |
-| Collection DML: `add` / `update` / `upsert` / `delete` (explicit embeddings) | ✅ | Length & dimension checks; semantics aligned with Python              |
-| Collection DQL: `query_embeddings` / `query_texts` / `get` / `count` / `peek` | ✅ | Supports metadata/document filters and include flags                  |
-| Filter expressions `Filter` / `DocFilter`        | ✅     | Typed equivalents of `$eq/$ne/$gt/...` and `$contains/$regex`         |
-| Integration tests (server mode)                  | ✅     | Require real SeekDB / OceanBase                                       |
-| `EmbeddingFunction` trait                        | ✅     | Custom implementations supported                                      |
-| Default embedding implementation `DefaultEmbedding` | ✅   | ONNX‑based, behind the `embedding` feature                            |
-| Auto‑embedding for `add` / `update` / `upsert`   | ✅     | When a collection has an `embedding_function`                         |
-| Text queries: `Collection::query_texts`          | ✅     | Uses attached `EmbeddingFunction`                                     |
-| Sync wrappers: `SyncServerClient` / `SyncCollection` | ✅  | Provided behind the `sync` feature                                    |
-| Hybrid search (`hybrid_search`, `hybrid_search_advanced`) | ✅ | Hybrid vector + text + metadata search                                |
-| Embedded client (on‑disk, non‑server mode)       | ❌     | Not implemented in Rust yet                                           |
-| RAG demo (end‑to‑end example)                    | ❌     | Only available in Python for now                                      |
+| Area                                                                          | Status | Notes                                                                                                                                                           |
+| ----------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Error type `SeekDbError`                                                      | ✅     | Unified error type, aligned with the design docs                                                                                                                |
+| Config types `ServerConfig` / `HnswConfig` / `DistanceMetric`                 | ✅     | Includes `from_env` helpers                                                                                                                                     |
+| Common structs `QueryResult` / `GetResult` / `IncludeField` / `Database`      | ✅     | Struct shapes match Python                                                                                                                                      |
+| Server client `ServerClient`                                                  | ✅     | `connect`/`from_config`/`from_env`/`execute`/`fetch_all`                                                                                                        |
+| Collection mgmt: create/get/get_or_create/delete/list/has/count               | ✅     | Table naming, vector column/index follow Python conventions                                                                                                     |
+| Collection DML: `add` / `update` / `upsert` / `delete` (explicit embeddings)  | ✅     | Length & dimension checks; semantics aligned with Python                                                                                                        |
+| Collection DQL: `query_embeddings` / `query_texts` / `get` / `count` / `peek` | ✅     | Supports metadata/document filters and include flags                                                                                                            |
+| Filter expressions `Filter` / `DocFilter`                                     | ✅     | Typed equivalents of `$eq/$ne/$gt/...` and `$contains/$regex`                                                                                                   |
+| Integration tests (server mode)                                               | ✅     | Require real SeekDB / OceanBase                                                                                                                                 |
+| `EmbeddingFunction` trait                                                     | ✅     | Custom implementations supported                                                                                                                                |
+| Default embedding implementation `DefaultEmbedding`                           | ✅     | ONNX‑based, behind the `embedding` feature                                                                                                                      |
+| Auto‑embedding for `add` / `update` / `upsert`                                | ✅     | When a collection has an `embedding_function`                                                                                                                   |
+| Text queries: `Collection::query_texts`                                       | ✅     | Uses attached `EmbeddingFunction`                                                                                                                               |
+| Sync wrappers: `SyncServerClient` / `SyncCollection`                          | ✅     | Provided behind the `sync` feature                                                                                                                              |
+| Hybrid search (`hybrid_search`, `hybrid_search_advanced`)                     | ✅     | Hybrid vector + text + metadata search                                                                                                                          |
+| Embedded client (on‑disk, non‑server mode)                                    | ✅     | Via `Client::builder().path(...)` or `EmbeddedClient`; requires `embedded` feature; unified close on last connection drop, optional `EmbeddedDatabase::close()` |
+| RAG demo (end‑to‑end example)                                                 | ❌     | Only available in Python for now                                                                                                                                |
 
 For more detailed, API‑by‑API explanations (currently in Simplified Chinese),
 see [`README_zh-CN.md`](README_zh-CN.md).

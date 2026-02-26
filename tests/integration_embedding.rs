@@ -3,12 +3,12 @@
 
 use anyhow::Result;
 use seekdb_rs::{
-    AddBatch, DefaultEmbedding, DistanceMetric, EmbeddingFunction, GetQuery, HnswConfig,
-    IncludeField, ServerClient,
+    AddBatch, AdminApi, DefaultEmbedding, DistanceMetric, EmbeddingFunction, GetQuery, HnswConfig,
+    IncludeField,
 };
 
 mod common;
-use common::{load_config_for_integration, ts_suffix};
+use common::{client_from_config, load_config_for_integration, ts_suffix};
 
 /// Use DefaultEmbedding to auto-generate embeddings when adding documents and verify shapes.
 #[tokio::test]
@@ -17,13 +17,13 @@ async fn collection_add_with_auto_embedding_default_embedding() -> Result<()> {
         return Ok(());
     };
 
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_auto_onnx_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("auto_onnx_coll_{}", ts_suffix());
 
@@ -89,13 +89,13 @@ async fn collection_query_texts_with_default_embedding() -> Result<()> {
         return Ok(());
     };
 
-    let admin = ServerClient::from_config(config.clone()).await?;
+    let admin = client_from_config(config.clone()).await?;
     let db_name = format!("rs_qtexts_onnx_{}", ts_suffix());
     admin.create_database(&db_name, None).await?;
 
     let mut db_config = config.clone();
     db_config.database = db_name.clone();
-    let client = ServerClient::from_config(db_config).await?;
+    let client = client_from_config(db_config).await?;
 
     let coll_name = format!("qtexts_onnx_coll_{}", ts_suffix());
 

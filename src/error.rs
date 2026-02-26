@@ -32,3 +32,15 @@ impl From<sqlx::Error> for SeekDbError {
         }
     }
 }
+
+impl From<std::ffi::NulError> for SeekDbError {
+    fn from(value: std::ffi::NulError) -> Self {
+        SeekDbError::InvalidInput(format!("Null byte in string: {}", value))
+    }
+}
+
+impl From<std::string::FromUtf8Error> for SeekDbError {
+    fn from(value: std::string::FromUtf8Error) -> Self {
+        SeekDbError::InvalidInput(format!("Invalid UTF-8: {}", value))
+    }
+}

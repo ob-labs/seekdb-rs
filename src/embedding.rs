@@ -148,8 +148,15 @@ fn resolve_model_paths() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
         return Ok((model_path, tokenizer_path));
     }
 
-    // 2) Otherwise, download / reuse model files via hf-hub into a configurable cache.
+    // 2) If cache dir already has onnx/model.onnx and tokenizer.json (e.g. from setup_onnx_model_cache.sh), use them and skip network.
     let cache_dir = cache_root();
+    let cached_model = cache_dir.join(&model_rel);
+    let cached_tokenizer = cache_dir.join(&tokenizer_rel);
+    if cached_model.exists() && cached_tokenizer.exists() {
+        return Ok((cached_model, cached_tokenizer));
+    }
+
+    // 3) Otherwise download via hf-hub and cache under the same cache dir.
     let api = ApiBuilder::from_env()
         .with_cache_dir(cache_dir)
         .with_progress(true)

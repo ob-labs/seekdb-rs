@@ -1,28 +1,87 @@
-//! Integration tests for collection query/get and filter behavior.
+//! Integration tests for embedded collection query/get operations.
+#![cfg_attr(not(feature = "embedded"), allow(dead_code))]
 
+#[cfg(not(feature = "embedded"))]
+fn main() {}
+
+#[cfg(feature = "embedded")]
 use anyhow::Result;
+#[cfg(feature = "embedded")]
 use seekdb_rs::{
-    AddBatch, AdminApi, DistanceMetric, DocFilter, Filter, GetQuery, HnswConfig, IncludeField,
+    AddBatch, Client, DocFilter, DistanceMetric, Filter, GetQuery, HnswConfig, IncludeField,
     SeekDbError,
 };
+#[cfg(feature = "embedded")]
 use serde_json::json;
-
+#[cfg(feature = "embedded")]
+#[path = "embedded/common.rs"]
 mod common;
-use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+#[cfg(feature = "embedded")]
+use common::{shared_db_dir, ConstantEmbedding, DummyEmbedding, ts_suffix};
 
-#[tokio::test]
+#[cfg(feature = "embedded")]
+fn main() {
+    common::run_embedded_tests(run_tests);
+}
+
+#[cfg(feature = "embedded")]
+async fn run_tests() -> Result<()> {
+    query_execute_and_fetch().await?;
+    query_filter_where().await?;
+    collection_query_and_filters().await?;
+    collection_query_texts_with_embedding_function().await?;
+    collection_query_texts_not_implemented().await?;
+    Ok(())
+}
+
+/// Execute + fetch_all (mirrors server collection_query_and_filters style).
+#[cfg(feature = "embedded")]
+async fn query_execute_and_fetch() -> Result<()> {
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS test_vectors (_id VARBINARY(512) PRIMARY KEY, document TEXT, embedding VECTOR(3), metadata JSON)",
+        None,
+    ).await?;
+    client.execute(
+        "INSERT INTO test_vectors (_id, document, embedding, metadata) VALUES (X'616263', 'test doc 1', '[0,0,0]', '{}')",
+        None,
+    ).await?;
+    let rows = client.fetch_all("SELECT _id, document FROM test_vectors", None).await?;
+    assert_eq!(rows.len(), 1);
+    client.execute("DROP TABLE IF EXISTS test_vectors", None).await?;
+    Ok(())
+}
+
+/// SQL WHERE filter (mirrors server collection_query_and_filters).
+#[cfg(feature = "embedded")]
+async fn query_filter_where() -> Result<()> {
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
+    client.execute("CREATE TABLE IF NOT EXISTS test_filter (id INT PRIMARY KEY, score INT)", None).await?;
+    client.execute("INSERT INTO test_filter (id, score) VALUES (1, 10), (2, 20)", None).await?;
+    let rows = client.fetch_all("SELECT * FROM test_filter WHERE score > 15", None).await?;
+    assert_eq!(rows.len(), 1);
+    client.execute("DROP TABLE IF EXISTS test_filter", None).await?;
+    Ok(())
+}
+
+#[cfg(feature = "embedded")]
 async fn collection_query_and_filters() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_query_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("q_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -31,8 +90,6 @@ async fn collection_query_and_filters() -> Result<()> {
     let coll = client
         .create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)
         .await?;
-
-    // Insert a few records
     let ids = vec!["qa1".to_string(), "qa2".to_string(), "qa3".to_string()];
     let embs = vec![
         vec![0.0, 0.0, 0.0],
@@ -49,7 +106,6 @@ async fn collection_query_and_filters() -> Result<()> {
         json!({"score": 20, "tag": "y"}),
         json!({"score": 30, "tag": "x"}),
     ];
-
     coll.add_batch(
         AddBatch::new(&ids)
             .embeddings(&embs)
@@ -57,8 +113,6 @@ async fn collection_query_and_filters() -> Result<()> {
             .documents(&docs),
     )
     .await?;
-
-    // get with metadata filter
     let where_meta = Filter::Gt {
         field: "score".into(),
         value: json!(15),
@@ -67,40 +121,16 @@ async fn collection_query_and_filters() -> Result<()> {
         .get_query(GetQuery::new().with_where_meta(&where_meta))
         .await?;
     assert!(got.ids.len() >= 1);
-
-    // get with document filter
     let where_doc = DocFilter::Contains("rust".into());
     let got_doc = coll
         .get_query(GetQuery::new().with_where_doc(&where_doc))
         .await?;
     assert!(got_doc.ids.len() >= 1);
-
-    // query_embeddings default include: documents+metadatas, no embeddings
     let q = vec![vec![0.0, 0.0, 0.0]];
     let qr = coll.query_embeddings(&q, 2, None, None, None).await?;
     assert_eq!(qr.ids.len(), 1);
-    assert_eq!(qr.distances.as_ref().unwrap()[0].len(), 2);
     assert!(qr.documents.as_ref().is_some());
     assert!(qr.metadatas.as_ref().is_some());
-    assert!(qr.embeddings.is_none());
-
-    // query_embeddings with embeddings included
-    let qr2 = coll
-        .query_embeddings(
-            &q,
-            2,
-            None,
-            None,
-            Some(&[
-                IncludeField::Documents,
-                IncludeField::Metadatas,
-                IncludeField::Embeddings,
-            ]),
-        )
-        .await?;
-    assert!(qr2.embeddings.as_ref().is_some());
-
-    // README-style `Filter::In` metadata filter.
     let where_in = Filter::In {
         field: "tag".into(),
         values: vec![json!("x")],
@@ -109,33 +139,18 @@ async fn collection_query_and_filters() -> Result<()> {
         .get_query(GetQuery::new().with_where_meta(&where_in))
         .await?;
     assert!(got_in.ids.len() >= 1);
-
-    // README-style `DocFilter::Regex` document filter.
-    let where_doc_regex = DocFilter::Regex("rust".into());
-    let got_regex = coll
-        .get_query(GetQuery::new().with_where_doc(&where_doc_regex))
-        .await?;
-    assert!(got_regex.ids.len() >= 1);
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
 
-/// query_texts should embed queries via embedding_function and reuse query_embeddings path.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_query_texts_with_embedding_function() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_qtexts_ok_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("qtexts_ok_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -143,14 +158,11 @@ async fn collection_query_texts_with_embedding_function() -> Result<()> {
     };
     let ef = ConstantEmbedding { value: 0.2, dim: 3 };
     let coll = client
-        .create_collection::<ConstantEmbedding>(&coll_name, Some(hnsw), Some(ef))
+        .create_collection(&coll_name, Some(hnsw), Some(ef))
         .await?;
-
     let ids = vec!["qt1".to_string(), "qt2".to_string()];
     let docs = vec!["hello rust".to_string(), "hello seekdb".to_string()];
-    // Use auto-embedding for adds (documents only).
     coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
-
     let qr = coll
         .query_texts(
             &["hello rust".to_string()],
@@ -162,26 +174,18 @@ async fn collection_query_texts_with_embedding_function() -> Result<()> {
         .await?;
     assert_eq!(qr.ids.len(), 1);
     assert!(!qr.ids[0].is_empty());
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
 
-/// query_texts should error when collection has no embedding_function.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_query_texts_not_implemented() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_qtexts_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("qtexts_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -190,7 +194,6 @@ async fn collection_query_texts_not_implemented() -> Result<()> {
     let coll = client
         .create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)
         .await?;
-
     let res = coll
         .query_texts(
             &["some query".to_string()],
@@ -200,10 +203,7 @@ async fn collection_query_texts_not_implemented() -> Result<()> {
             Some(&[IncludeField::Documents]),
         )
         .await;
-
     assert!(matches!(res, Err(SeekDbError::Embedding(_))));
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }

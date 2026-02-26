@@ -1,30 +1,48 @@
-//! Integration tests for hybrid_search and hybrid_search_advanced.
+//! Integration tests for embedded hybrid_search operations.
+#![cfg_attr(not(feature = "embedded"), allow(dead_code))]
 
+#[cfg(not(feature = "embedded"))]
+fn main() {}
+
+#[cfg(feature = "embedded")]
 use anyhow::Result;
+#[cfg(feature = "embedded")]
 use seekdb_rs::{
     collection::{HybridKnn, HybridQuery, HybridRank},
-    AddBatch, AdminApi, DistanceMetric, DocFilter, Embedding, Filter, HnswConfig, IncludeField,
+    AddBatch, Client, DocFilter, DistanceMetric, Embedding, Filter, HnswConfig, IncludeField,
     SeekDbError,
 };
+#[cfg(feature = "embedded")]
 use serde_json::json;
-
+#[cfg(feature = "embedded")]
+#[path = "embedded/common.rs"]
 mod common;
-use common::{client_from_config, ConstantEmbedding, DummyEmbedding, load_config_for_integration, ts_suffix};
+#[cfg(feature = "embedded")]
+use common::{shared_db_dir, ConstantEmbedding, DummyEmbedding, ts_suffix};
+
+#[cfg(feature = "embedded")]
+fn main() {
+    common::run_embedded_tests(run_tests);
+}
+
+#[cfg(feature = "embedded")]
+async fn run_tests() -> Result<()> {
+    collection_hybrid_search_basic().await?;
+    collection_hybrid_search_advanced_vector_only().await?;
+    collection_hybrid_search_advanced_query_knn_rank().await?;
+    collection_hybrid_search_not_implemented().await?;
+    Ok(())
+}
 
 /// Hybrid search should succeed when using embedding_function for query text.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_hybrid_search_basic() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_hybrid_ok_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("hybrid_ok_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -34,17 +52,13 @@ async fn collection_hybrid_search_basic() -> Result<()> {
     let coll = client
         .create_collection::<ConstantEmbedding>(&coll_name, Some(hnsw), Some(ef))
         .await?;
-
-    // Insert a few docs via auto-embedding.
     let ids = vec!["hy1".to_string(), "hy2".to_string(), "hy3".to_string()];
     let docs = vec![
         "rust hybrid search".to_string(),
         "seekdb vector".to_string(),
         "other text".to_string(),
     ];
-    coll.add_batch(AddBatch::new(&ids).documents(&docs))
-        .await?;
-
+    coll.add_batch(AddBatch::new(&ids).documents(&docs)).await?;
     let qr = coll
         .hybrid_search(
             &["rust".to_string()],
@@ -55,29 +69,21 @@ async fn collection_hybrid_search_basic() -> Result<()> {
             Some(&[IncludeField::Documents, IncludeField::Metadatas]),
         )
         .await?;
-
     assert_eq!(qr.ids.len(), 1);
     assert!(!qr.ids[0].is_empty(), "expected at least one hybrid result");
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
 
 /// High-level hybrid_search with KNN-only configuration using precomputed query_embeddings.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_hybrid_adv_vec_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("hybrid_adv_vec_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -86,8 +92,6 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
     let coll = client
         .create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)
         .await?;
-
-    // Insert a few records with explicit embeddings so that vector search is meaningful.
     let ids = vec![
         format!("hv1_{}", ts_suffix()),
         format!("hv2_{}", ts_suffix()),
@@ -103,14 +107,8 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
         vec![1.1_f32, 2.1_f32, 3.1_f32],
         vec![5.0_f32, 5.0_f32, 5.0_f32],
     ];
-    coll.add_batch(
-        AddBatch::new(&ids)
-            .embeddings(&embs)
-            .documents(&docs),
-    )
-    .await?;
-
-    // Use a query embedding close to the first two vectors.
+    coll.add_batch(AddBatch::new(&ids).embeddings(&embs).documents(&docs))
+        .await?;
     let query_vec: Embedding = vec![1.05_f32, 2.05_f32, 3.05_f32];
     let knn = HybridKnn {
         query_texts: None,
@@ -118,7 +116,6 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
         where_meta: None,
         n_results: Some(3),
     };
-
     let qr = coll
         .hybrid_search_advanced(
             None,
@@ -128,32 +125,24 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
             Some(&[IncludeField::Documents, IncludeField::Metadatas]),
         )
         .await?;
-
     assert_eq!(qr.ids.len(), 1);
     assert!(
         !qr.ids[0].is_empty(),
         "expected at least one result from advanced KNN-only hybrid_search"
     );
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
 
 /// High-level hybrid_search combining full-text query, KNN, and RRF rank configuration.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_hybrid_adv_full_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("hybrid_adv_full_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -162,8 +151,6 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
     let coll = client
         .create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)
         .await?;
-
-    // Insert a small corpus with metadata for filtering.
     let ids = vec![
         format!("hfv1_{}", ts_suffix()),
         format!("hfv2_{}", ts_suffix()),
@@ -191,8 +178,6 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
             .documents(&docs),
     )
     .await?;
-
-    // Build query: full-text "machine" with metadata filter category == "AI".
     let where_doc = DocFilter::Contains("machine".to_string());
     let where_meta = Filter::Eq {
         field: "category".to_string(),
@@ -202,8 +187,6 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
         where_meta: Some(where_meta),
         where_doc: Some(where_doc),
     };
-
-    // Build knn: query vector close to first/third embeddings, with score >= 90.
     let knn_where_meta = Filter::Gte {
         field: "score".to_string(),
         value: json!(90),
@@ -214,12 +197,10 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
         where_meta: Some(knn_where_meta),
         n_results: Some(3),
     };
-
     let rank = HybridRank::Rrf {
         rank_window_size: Some(60),
         rank_constant: Some(60),
     };
-
     let qr = coll
         .hybrid_search_advanced(
             Some(query),
@@ -229,13 +210,11 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
             Some(&[IncludeField::Documents, IncludeField::Metadatas]),
         )
         .await?;
-
     assert_eq!(qr.ids.len(), 1);
     assert!(
         !qr.ids[0].is_empty(),
         "expected at least one result from advanced hybrid_search with query+knn+rank"
     );
-
     // All returned metadatas should satisfy category == "AI".
     if let Some(metas_out) = qr.metadatas.as_ref() {
         for meta in &metas_out[0] {
@@ -244,26 +223,19 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
             }
         }
     }
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }
 
 /// Verify that hybrid_search with text queries errors when collection has no embedding function.
-#[tokio::test]
+#[cfg(feature = "embedded")]
 async fn collection_hybrid_search_not_implemented() -> Result<()> {
-    let Some(config) = load_config_for_integration() else {
-        return Ok(());
-    };
-    let admin = client_from_config(config.clone()).await?;
-    let db_name = format!("rs_hybrid_{}", ts_suffix());
-    admin.create_database(&db_name, None).await?;
-
-    let mut db_config = config.clone();
-    db_config.database = db_name.clone();
-    let client = client_from_config(db_config).await?;
-
+    let db_dir = shared_db_dir();
+    let client = Client::builder()
+        .path(db_dir.to_string_lossy().as_ref())
+        .database("test")
+        .build()
+        .await?;
     let coll_name = format!("hybrid_coll_{}", ts_suffix());
     let hnsw = HnswConfig {
         dimension: 3,
@@ -272,14 +244,10 @@ async fn collection_hybrid_search_not_implemented() -> Result<()> {
     let coll = client
         .create_collection::<DummyEmbedding>(&coll_name, Some(hnsw), None::<DummyEmbedding>)
         .await?;
-
     let res = coll
         .hybrid_search(&["query text".to_string()], None, None, None, 10, None)
         .await;
-
     assert!(matches!(res, Err(SeekDbError::Embedding(_))));
-
     client.delete_collection(&coll_name).await.ok();
-    admin.delete_database(&db_name, None).await.ok();
     Ok(())
 }

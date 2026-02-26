@@ -3,7 +3,10 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{MySqlPool, Row};
 
 use crate::admin::AdminApi;
-use crate::backend::SqlBackend;
+use crate::backend::{
+    BackendRow, CollectionBackend, QueryParam, SqlBackend,
+};
+use crate::client_trait::SeekDbClient;
 use crate::collection::Collection;
 use crate::config::{DistanceMetric, HnswConfig, ServerConfig};
 use crate::embedding::EmbeddingFunction;
@@ -392,13 +395,112 @@ impl SqlBackend for ServerClient {
     }
 }
 
+// Implement SeekDbClient trait for ServerClient
+#[async_trait::async_trait]
+impl CollectionBackend for ServerClient {
+    async fn execute(&self, sql: &str) -> Result<()> {
+        sqlx::query(sql).execute(&self.pool).await.map(|_| ()).map_err(Into::into)
+    }
+
+    async fn fetch_all(&self, sql: &str) -> Result<Vec<Box<dyn BackendRow>>> {
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Box::new(r) as Box<dyn BackendRow>)
+            .collect())
+    }
+
+    async fn execute_with_params(&self, sql: &str, params: &[QueryParam]) -> Result<()> {
+        let mut query = sqlx::query(sql);
+        for p in params {
+            query = bind_query_param(query, p);
+        }
+        query.execute(&self.pool).await.map(|_| ()).map_err(Into::into)
+    }
+
+    async fn fetch_all_with_params(&self, sql: &str, params: &[QueryParam]) -> Result<Vec<Box<dyn BackendRow>>> {
+        let mut query = sqlx::query(sql);
+        for p in params {
+            query = bind_query_param(query, p);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Box::new(r) as Box<dyn BackendRow>)
+            .collect())
+    }
+}
+
+fn bind_query_param<'q>(
+    query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+    p: &QueryParam,
+) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
+    use crate::backend::QueryParam as QP;
+    match p {
+        QP::String(s) => query.bind(s.clone()),
+        QP::Bytes(b) => query.bind(b.clone()),
+        QP::I64(i) => query.bind(*i),
+        QP::F32(f) => query.bind(*f),
+        QP::Null => query.bind::<Option<i32>>(None),
+    }
+}
+
+#[async_trait]
+impl SeekDbClient for ServerClient {
+    fn database(&self) -> &str {
+        &self.database
+    }
+
+    async fn create_collection<Ef: EmbeddingFunction + 'static>(
+        &self,
+        name: &str,
+        config: Option<HnswConfig>,
+        embedding_function: Option<Ef>,
+    ) -> Result<Collection<Ef>> {
+        ServerClient::create_collection(self, name, config, embedding_function).await
+    }
+
+    async fn get_collection<Ef: EmbeddingFunction + 'static>(
+        &self,
+        name: &str,
+        embedding_function: Option<Ef>,
+    ) -> Result<Collection<Ef>> {
+        ServerClient::get_collection(self, name, embedding_function).await
+    }
+
+    async fn delete_collection(&self, name: &str) -> Result<()> {
+        ServerClient::delete_collection(self, name).await
+    }
+
+    async fn list_collections(&self) -> Result<Vec<String>> {
+        ServerClient::list_collections(self).await
+    }
+
+    async fn has_collection(&self, name: &str) -> Result<bool> {
+        ServerClient::has_collection(self, name).await
+    }
+
+    async fn get_or_create_collection<Ef: EmbeddingFunction + 'static>(
+        &self,
+        name: &str,
+        config: Option<HnswConfig>,
+        embedding_function: Option<Ef>,
+    ) -> Result<Collection<Ef>> {
+        ServerClient::get_or_create_collection(self, name, config, embedding_function).await
+    }
+
+    async fn count_collection(&self) -> Result<usize> {
+        ServerClient::count_collection(self).await
+    }
+}
+
 impl ServerClient {
     fn effective_tenant<'a>(&'a self, tenant: Option<&'a str>) -> &'a str {
         tenant.unwrap_or(&self.tenant)
     }
 }
 
-fn build_create_table_sql(table_name: &str, dimension: u32, distance: DistanceMetric) -> String {
+pub(crate) fn build_create_table_sql(table_name: &str, dimension: u32, distance: DistanceMetric) -> String {
     let distance = distance_str(distance);
     format!(
         "CREATE TABLE `{table_name}` (

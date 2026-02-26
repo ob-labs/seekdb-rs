@@ -1,7 +1,10 @@
+// Different server test binaries use different subsets of this module.
+#![allow(dead_code)]
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use seekdb_rs::{EmbeddingFunction, Embeddings, SeekDbError, ServerConfig};
+use seekdb_rs::{Client, ClientBuilder, EmbeddingFunction, Embeddings, SeekDbError, ServerConfig};
 
 /// Load ServerConfig from environment when `SEEKDB_INTEGRATION=1` is set.
 /// Returns None and prints a SKIP message otherwise.
@@ -11,6 +14,14 @@ pub fn load_config_for_integration() -> Option<ServerConfig> {
         return None;
     }
     ServerConfig::from_env().ok()
+}
+
+/// Build unified Client from ServerConfig (server mode). Used by server integration tests.
+pub async fn client_from_config(config: ServerConfig) -> Result<Client> {
+    ClientBuilder::from_server_config(config)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Millisecond timestamp string used to make database/collection names unique.
