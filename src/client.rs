@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 
 use crate::admin::AdminApi;
-use crate::backend::{BackendRow, CollectionBackend};
+use crate::backend::{BackendRow, CollectionBackend, QueryParam};
 use crate::collection::Collection;
 use crate::config::HnswConfig;
 #[cfg(feature = "server")]
@@ -262,24 +262,52 @@ impl Client {
     }
 
     /// Execute a SQL statement that does not return rows.
-    pub async fn execute(&self, sql: &str) -> Result<()> {
+    /// If `params` is `Some` with non-empty slice, uses parameterized execution (`?` placeholders in `sql`).
+    /// If `params` is `None` or `Some(&[])`, executes `sql` as-is (no parameters).
+    pub async fn execute(&self, sql: &str, params: Option<&[QueryParam]>) -> Result<()> {
+        let use_params = params.map(|p| !p.is_empty()).unwrap_or(false);
         match self {
             #[cfg(feature = "server")]
             Client::Server(client) => {
-                client.execute(sql).await.map(|_| ())
+                if use_params {
+                    CollectionBackend::execute_with_params(client, sql, params.unwrap()).await
+                } else {
+                    client.execute(sql).await.map(|_| ())
+                }
             }
             #[cfg(feature = "embedded")]
-            Client::Embedded(client) => client.execute(sql).await,
+            Client::Embedded(client) => {
+                if use_params {
+                    CollectionBackend::execute_with_params(client, sql, params.unwrap()).await
+                } else {
+                    client.execute(sql).await
+                }
+            }
         }
     }
 
     /// Execute a query and return all rows (unified BackendRow).
-    pub async fn fetch_all(&self, sql: &str) -> Result<Vec<Box<dyn BackendRow>>> {
+    /// If `params` is `Some` with non-empty slice, uses parameterized execution (`?` placeholders in `sql`).
+    /// If `params` is `None` or `Some(&[])`, executes `sql` as-is (no parameters).
+    pub async fn fetch_all(&self, sql: &str, params: Option<&[QueryParam]>) -> Result<Vec<Box<dyn BackendRow>>> {
+        let use_params = params.map(|p| !p.is_empty()).unwrap_or(false);
         match self {
             #[cfg(feature = "server")]
-            Client::Server(client) => CollectionBackend::fetch_all(client, sql).await,
+            Client::Server(client) => {
+                if use_params {
+                    CollectionBackend::fetch_all_with_params(client, sql, params.unwrap()).await
+                } else {
+                    CollectionBackend::fetch_all(client, sql).await
+                }
+            }
             #[cfg(feature = "embedded")]
-            Client::Embedded(client) => CollectionBackend::fetch_all(client, sql).await,
+            Client::Embedded(client) => {
+                if use_params {
+                    CollectionBackend::fetch_all_with_params(client, sql, params.unwrap()).await
+                } else {
+                    CollectionBackend::fetch_all(client, sql).await
+                }
+            }
         }
     }
 

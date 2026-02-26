@@ -34,6 +34,7 @@ async fn run_tests() -> Result<()> {
     Ok(())
 }
 
+/// Hybrid search should succeed when using embedding_function for query text.
 #[cfg(feature = "embedded")]
 async fn collection_hybrid_search_basic() -> Result<()> {
     let db_dir = shared_db_dir();
@@ -69,11 +70,12 @@ async fn collection_hybrid_search_basic() -> Result<()> {
         )
         .await?;
     assert_eq!(qr.ids.len(), 1);
-    assert!(!qr.ids[0].is_empty());
+    assert!(!qr.ids[0].is_empty(), "expected at least one hybrid result");
     client.delete_collection(&coll_name).await.ok();
     Ok(())
 }
 
+/// High-level hybrid_search with KNN-only configuration using precomputed query_embeddings.
 #[cfg(feature = "embedded")]
 async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
     let db_dir = shared_db_dir();
@@ -124,11 +126,15 @@ async fn collection_hybrid_search_advanced_vector_only() -> Result<()> {
         )
         .await?;
     assert_eq!(qr.ids.len(), 1);
-    assert!(!qr.ids[0].is_empty());
+    assert!(
+        !qr.ids[0].is_empty(),
+        "expected at least one result from advanced KNN-only hybrid_search"
+    );
     client.delete_collection(&coll_name).await.ok();
     Ok(())
 }
 
+/// High-level hybrid_search combining full-text query, KNN, and RRF rank configuration.
 #[cfg(feature = "embedded")]
 async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
     let db_dir = shared_db_dir();
@@ -205,7 +211,11 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
         )
         .await?;
     assert_eq!(qr.ids.len(), 1);
-    assert!(!qr.ids[0].is_empty());
+    assert!(
+        !qr.ids[0].is_empty(),
+        "expected at least one result from advanced hybrid_search with query+knn+rank"
+    );
+    // All returned metadatas should satisfy category == "AI".
     if let Some(metas_out) = qr.metadatas.as_ref() {
         for meta in &metas_out[0] {
             if !meta.is_null() {
@@ -217,6 +227,7 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
     Ok(())
 }
 
+/// Verify that hybrid_search with text queries errors when collection has no embedding function.
 #[cfg(feature = "embedded")]
 async fn collection_hybrid_search_not_implemented() -> Result<()> {
     let db_dir = shared_db_dir();

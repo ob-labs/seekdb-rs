@@ -42,7 +42,7 @@ async fn client_connect_and_execute() -> Result<()> {
         .database("test")
         .build()
         .await?;
-    client.execute("SELECT 1").await?;
+    client.execute("SELECT 1", None).await?;
     Ok(())
 }
 
@@ -123,7 +123,7 @@ async fn client_and_admin_builders() -> Result<()> {
         .build()
         .await?;
     assert_eq!(client.database(), "test");
-    client.execute("SELECT 1").await?;
+    client.execute("SELECT 1", None).await?;
     let admin = AdminClient::builder()
         .path(path.as_ref())
         .build()

@@ -250,7 +250,7 @@ async fn collection_hybrid_search_advanced_query_knn_rank() -> Result<()> {
     Ok(())
 }
 
-/// Verify that the hybrid_search API errors when missing embedding function for text queries.
+/// Verify that hybrid_search with text queries errors when collection has no embedding function.
 #[tokio::test]
 async fn collection_hybrid_search_not_implemented() -> Result<()> {
     let Some(config) = load_config_for_integration() else {

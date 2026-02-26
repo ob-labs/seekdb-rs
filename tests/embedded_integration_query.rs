@@ -45,13 +45,15 @@ async fn query_execute_and_fetch() -> Result<()> {
         .await?;
     client.execute(
         "CREATE TABLE IF NOT EXISTS test_vectors (_id VARBINARY(512) PRIMARY KEY, document TEXT, embedding VECTOR(3), metadata JSON)",
+        None,
     ).await?;
     client.execute(
         "INSERT INTO test_vectors (_id, document, embedding, metadata) VALUES (X'616263', 'test doc 1', '[0,0,0]', '{}')",
+        None,
     ).await?;
-    let rows = client.fetch_all("SELECT _id, document FROM test_vectors").await?;
+    let rows = client.fetch_all("SELECT _id, document FROM test_vectors", None).await?;
     assert_eq!(rows.len(), 1);
-    client.execute("DROP TABLE IF EXISTS test_vectors").await?;
+    client.execute("DROP TABLE IF EXISTS test_vectors", None).await?;
     Ok(())
 }
 
@@ -64,11 +66,11 @@ async fn query_filter_where() -> Result<()> {
         .database("test")
         .build()
         .await?;
-    client.execute("CREATE TABLE IF NOT EXISTS test_filter (id INT PRIMARY KEY, score INT)").await?;
-    client.execute("INSERT INTO test_filter (id, score) VALUES (1, 10), (2, 20)").await?;
-    let rows = client.fetch_all("SELECT * FROM test_filter WHERE score > 15").await?;
+    client.execute("CREATE TABLE IF NOT EXISTS test_filter (id INT PRIMARY KEY, score INT)", None).await?;
+    client.execute("INSERT INTO test_filter (id, score) VALUES (1, 10), (2, 20)", None).await?;
+    let rows = client.fetch_all("SELECT * FROM test_filter WHERE score > 15", None).await?;
     assert_eq!(rows.len(), 1);
-    client.execute("DROP TABLE IF EXISTS test_filter").await?;
+    client.execute("DROP TABLE IF EXISTS test_filter", None).await?;
     Ok(())
 }
 

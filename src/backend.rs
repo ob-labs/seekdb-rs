@@ -2,6 +2,20 @@ use async_trait::async_trait;
 
 use crate::error::Result;
 
+/// Convert a BackendRow to a vec of `serde_json::Value` by column index (0..max_cols).
+/// Uses `get_string_by_index` for each column; useful for callers that need JSON values for parsing.
+pub fn row_to_json_values(row: &dyn BackendRow, max_cols: usize) -> Vec<serde_json::Value> {
+    let mut v = Vec::with_capacity(max_cols);
+    for i in 0..max_cols {
+        match row.get_string_by_index(i) {
+            Ok(Some(s)) => v.push(serde_json::Value::String(s)),
+            Ok(None) => v.push(serde_json::Value::Null),
+            Err(_) => break,
+        }
+    }
+    v
+}
+
 /// Parameter for parameterized SQL (used by Collection with both server and embedded backends).
 #[derive(Clone, Debug)]
 pub enum QueryParam {
@@ -57,7 +71,8 @@ pub trait CollectionBackend: Send + Sync {
 ///
 /// This trait is intentionally small and does not expose sqlx-specific types,
 /// so that future embedded backends can provide their own row implementations.
-pub trait BackendRow {
+/// Requires Send + Sync so that futures returning Vec<Box<dyn BackendRow>> are Send.
+pub trait BackendRow: Send + Sync {
     /// Get a binary value from a column (commonly used for `_id`).
     fn get_bytes(&self, column: &str) -> Result<Option<Vec<u8>>>;
 

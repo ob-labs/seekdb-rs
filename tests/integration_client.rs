@@ -26,7 +26,7 @@ async fn client_connect_and_execute() -> Result<()> {
         .build()
         .await?;
 
-    client.execute("SELECT 1").await?;
+    client.execute("SELECT 1", None).await?;
     Ok(())
 }
 
@@ -71,7 +71,7 @@ async fn client_builder_connect_and_execute() -> Result<()> {
         .build()
         .await?;
 
-    client.execute("SELECT 1").await?;
+    client.execute("SELECT 1", None).await?;
     Ok(())
 }
 

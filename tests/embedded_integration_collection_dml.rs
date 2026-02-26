@@ -466,11 +466,11 @@ async fn sql_execution() -> Result<()> {
         .database("test")
         .build()
         .await?;
-    client.execute("CREATE TABLE IF NOT EXISTS test_table (id INT, name VARCHAR(100))").await?;
-    client.execute("INSERT INTO test_table (id, name) VALUES (1, 'test1')").await?;
-    let rows = client.fetch_all("SELECT id, name FROM test_table ORDER BY id").await?;
+    client.execute("CREATE TABLE IF NOT EXISTS test_table (id INT, name VARCHAR(100))", None).await?;
+    client.execute("INSERT INTO test_table (id, name) VALUES (1, 'test1')", None).await?;
+    let rows = client.fetch_all("SELECT id, name FROM test_table ORDER BY id", None).await?;
     assert_eq!(rows.len(), 1);
-    client.execute("DROP TABLE IF EXISTS test_table").await?;
+    client.execute("DROP TABLE IF EXISTS test_table", None).await?;
     Ok(())
 }
 
@@ -482,6 +482,6 @@ async fn sql_error_handling() -> Result<()> {
         .database("test")
         .build()
         .await?;
-    assert!(client.execute("SELECT * FROM non_existent_table").await.is_err());
+    assert!(client.execute("SELECT * FROM non_existent_table", None).await.is_err());
     Ok(())
 }
