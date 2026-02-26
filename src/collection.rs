@@ -377,8 +377,8 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 .to_string();
             let meta_str = metadatas
                 .and_then(|m| m.get(i))
-                .map(|v| serde_json::to_string(v).unwrap_or_default())
-                .unwrap_or_default();
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{}".into());
             let emb_str = vector_to_string(&embeddings[i]);
             let params = [
                 QueryParam::Bytes(id_bytes),
@@ -482,7 +482,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 if let Some(meta) = metas.get(i) {
                     sets.push((
                         "metadata".to_string(),
-                        serde_json::to_string(meta).unwrap_or_default(),
+                        serde_json::to_string(meta).unwrap_or_else(|_| "{}".into()),
                     ));
                 }
             }
@@ -647,7 +647,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 if metadatas.is_some() {
                     sets.push((
                         "metadata".to_string(),
-                        serde_json::to_string(&final_meta).unwrap_or_default(),
+                        serde_json::to_string(&final_meta).unwrap_or_else(|_| "{}".into()),
                     ));
                 }
                 if embeddings.is_some() {
@@ -675,7 +675,7 @@ impl<Ef: EmbeddingFunction + 'static> Collection<Ef> {
                 let params = [
                     QueryParam::Bytes(id.as_bytes().to_vec()),
                     QueryParam::String(final_doc.unwrap_or_default()),
-                    QueryParam::String(serde_json::to_string(&final_meta).unwrap_or_default()),
+                    QueryParam::String(serde_json::to_string(&final_meta).unwrap_or_else(|_| "{}".into())),
                     QueryParam::String(
                         final_emb
                             .as_ref()

@@ -122,6 +122,9 @@ fn download_libseekdb(out_dir: &str) -> Result<(PathBuf, Option<PathBuf>), Box<d
     }
 
     copy_lib_to_deps(&download_dir, dynamic_lib, out_dir)?;
+    // Also copy to target/$PROFILE/ so the final binary (e.g. when running `cargo run` or `tauri dev`)
+    // finds libseekdb via @loader_path without the application having to do anything.
+    copy_lib_to_profile_bin_dir(&download_dir, dynamic_lib, out_dir)?;
 
     let header_in_extracted = find_seekdb_header_in_dir(&download_dir);
     Ok((download_dir, header_in_extracted))
@@ -196,8 +199,7 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), Box<dyn std::
 }
 
 #[cfg(feature = "embedded")]
-fn profile_deps_dir(out_dir: &str) -> Option<PathBuf> {
-    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+fn profile_target_root(out_dir: &str) -> Option<PathBuf> {
     let mut target_root = env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -216,9 +218,17 @@ fn profile_deps_dir(out_dir: &str) -> Option<PathBuf> {
             target_root.push(t);
         }
     }
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     target_root.push(profile);
-    target_root.push("deps");
     Some(target_root)
+}
+
+#[cfg(feature = "embedded")]
+fn profile_deps_dir(out_dir: &str) -> Option<PathBuf> {
+    profile_target_root(out_dir).map(|mut p| {
+        p.push("deps");
+        p
+    })
 }
 
 #[cfg(feature = "embedded")]
@@ -254,6 +264,44 @@ fn copy_lib_to_deps(
             }
         }
         println!("Copied libseekdb libs/ to {}", libs_dest.display());
+    }
+    Ok(())
+}
+
+/// Copy libseekdb and libs/ to target/$PROFILE/ so that the final binary (in that directory)
+/// finds them via @loader_path. This way applications using seekdb-rs need no extra setup.
+#[cfg(feature = "embedded")]
+fn copy_lib_to_profile_bin_dir(
+    download_dir: &Path,
+    lib_filename: &str,
+    out_dir: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(bin_dir) = profile_target_root(out_dir) else {
+        return Ok(());
+    };
+    fs::create_dir_all(&bin_dir)?;
+    let source = download_dir.join(lib_filename);
+    let dest = bin_dir.join(lib_filename);
+    if source.exists() {
+        if dest.exists() {
+            fs::remove_file(&dest)?;
+        }
+        fs::copy(&source, &dest)?;
+        println!("Copied libseekdb to {} (for @loader_path)", dest.display());
+    }
+    let libs_src = download_dir.join("libs");
+    if libs_src.is_dir() {
+        let libs_dest = bin_dir.join("libs");
+        fs::create_dir_all(&libs_dest)?;
+        for e in fs::read_dir(&libs_src)? {
+            let e = e?;
+            let name = e.file_name();
+            let to = libs_dest.join(&name);
+            if e.file_type()?.is_file() {
+                fs::copy(e.path(), &to)?;
+            }
+        }
+        println!("Copied libseekdb libs/ to {} (for @loader_path)", libs_dest.display());
     }
     Ok(())
 }
